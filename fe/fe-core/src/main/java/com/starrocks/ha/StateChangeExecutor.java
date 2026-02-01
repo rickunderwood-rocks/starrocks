@@ -35,6 +35,10 @@ public class StateChangeExecutor extends Daemon {
     private BlockingQueue<FrontendNodeType> typeTransferQueue;
     private List<StateChangeExecution> executions;
 
+    // CelerData Fast Raft: Track failover timing for metrics
+    private volatile long lastLeaderLostTime = 0;
+    private volatile long lastLeaderGainedTime = 0;
+
     private static class SingletonHolder {
         private static final StateChangeExecutor INSTANCE = new StateChangeExecutor();
     }
@@ -142,12 +146,20 @@ public class StateChangeExecutor extends Daemon {
                 case FOLLOWER: {
                     switch (newType) {
                         case LEADER: {
+                            // CelerData Fast Raft: Measure failover time
+                            long failoverStartTime = lastLeaderLostTime > 0 ? lastLeaderLostTime : System.currentTimeMillis();
                             for (StateChangeExecution execution : executions) {
                                 execution.transferToLeader();
                             }
+                            lastLeaderGainedTime = System.currentTimeMillis();
+                            long failoverDuration = lastLeaderGainedTime - failoverStartTime;
+                            LOG.info("CelerData Fast Raft: FOLLOWER->LEADER transition completed in {}ms", failoverDuration);
+                            FastRaftManager.getInstance().recordFailover(failoverDuration);
                             break;
                         }
                         case UNKNOWN: {
+                            // CelerData Fast Raft: Record when we lose leader contact
+                            lastLeaderLostTime = System.currentTimeMillis();
                             for (StateChangeExecution execution : executions) {
                                 execution.transferToNonLeader(newType);
                             }

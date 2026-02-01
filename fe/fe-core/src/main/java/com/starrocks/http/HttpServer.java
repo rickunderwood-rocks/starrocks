@@ -66,6 +66,7 @@ import com.starrocks.http.rest.BootstrapFinishAction;
 import com.starrocks.http.rest.CancelStreamLoadAction;
 import com.starrocks.http.rest.CheckDecommissionAction;
 import com.starrocks.http.rest.ConnectionAction;
+import com.starrocks.http.rest.AsyncQueryAction;
 import com.starrocks.http.rest.ExecuteSqlAction;
 import com.starrocks.http.rest.FeatureAction;
 import com.starrocks.http.rest.GetClusterSnapshotRestoreStateAction;
@@ -242,6 +243,8 @@ public class HttpServer {
         // for stop FE
         StopFeAction.registerAction(controller);
         ExecuteSqlAction.registerAction(controller);
+        // CelerData: Async Query API for AI agents
+        AsyncQueryAction.registerAction(controller);
         BackendActionV2.registerAction(controller);
         ComputeNodeActionV2.registerAction(controller);
 

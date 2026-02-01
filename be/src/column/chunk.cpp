@@ -14,6 +14,7 @@
 
 #include "column/chunk.h"
 
+#include <unordered_set>
 #include <utility>
 
 #include "column/column_helper.h"
@@ -272,12 +273,33 @@ void Chunk::remove_column_by_slot_id(SlotId slot_id) {
 
 void Chunk::remove_columns_by_index(const std::vector<size_t>& indexes) {
     DCHECK(std::is_sorted(indexes.begin(), indexes.end()));
-    for (size_t i = indexes.size(); i > 0; i--) {
-        auto& column = _columns[indexes[i - 1]];
-        _column_ptr_set.erase(column.get());
-        _columns.erase(_columns.begin() + indexes[i - 1]);
+    if (indexes.empty()) {
+        return;
     }
-    if (_schema != nullptr && !indexes.empty()) {
+
+    // CelerData Optimization: O(n) single-pass compaction instead of O(n²) repeated erases
+    // Build a set of indices to remove for O(1) lookup
+    std::unordered_set<size_t> remove_set(indexes.begin(), indexes.end());
+
+    // Single-pass compaction: move non-removed columns to their new positions
+    size_t write_idx = 0;
+    for (size_t read_idx = 0; read_idx < _columns.size(); ++read_idx) {
+        if (remove_set.find(read_idx) != remove_set.end()) {
+            // This column is being removed - erase from ptr set
+            _column_ptr_set.erase(_columns[read_idx].get());
+        } else {
+            // Keep this column - move it to the compacted position
+            if (write_idx != read_idx) {
+                _columns[write_idx] = std::move(_columns[read_idx]);
+            }
+            ++write_idx;
+        }
+    }
+    // Resize the vector to remove trailing elements
+    _columns.resize(write_idx);
+
+    // Schema removal still needs individual removes (in reverse order to maintain indices)
+    if (_schema != nullptr) {
         for (size_t i = indexes.size(); i > 0; i--) {
             _schema->remove(indexes[i - 1]);
         }

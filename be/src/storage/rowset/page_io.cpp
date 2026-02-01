@@ -60,6 +60,20 @@ namespace starrocks {
 
 using strings::Substitute;
 
+// CelerData Optimization: I/O 4K alignment for SSD performance
+// Modern SSDs perform best with 4KB aligned reads
+constexpr size_t IO_ALIGNMENT = 4096;  // 4KB alignment
+
+// Helper to calculate 4K aligned offset (round down)
+inline size_t align_down(size_t offset) {
+    return offset & ~(IO_ALIGNMENT - 1);
+}
+
+// Helper to calculate 4K aligned size (round up)
+inline size_t align_up(size_t size) {
+    return (size + IO_ALIGNMENT - 1) & ~(IO_ALIGNMENT - 1);
+}
+
 Status PageIO::compress_page_body(const BlockCompressionCodec* codec, double min_space_saving,
                                   const std::vector<Slice>& body, faststring* compressed_body) {
     size_t uncompressed_size = Slice::compute_total_size(body);
@@ -194,16 +208,33 @@ static Status read_page_from_file(const PageReadOptions& opts, std::unique_ptr<s
                 strings::Substitute("Bad page: too small ($0), file($1)", page_size, opts.read_file->filename()));
     }
 
+    // CelerData Optimization: Use 4K aligned reads for better SSD performance
+    const uint64_t original_offset = opts.page_pointer.offset;
+    const uint64_t aligned_offset = align_down(original_offset);
+    const size_t offset_adjustment = original_offset - aligned_offset;
+    const size_t aligned_read_size = align_up(page_size + offset_adjustment);
+
     auto page = std::make_unique<std::vector<uint8_t>>();
     // Allocate APPEND_OVERFLOW_MAX_SIZE more bytes to make append_strings_overflow work
     size_t reserve_size = page_size + Column::APPEND_OVERFLOW_MAX_SIZE;
     RETURN_IF_ERROR(raw::stl_vector_resize_uninitialized_checked(page.get(), reserve_size, page_size - 4));
 
-    Slice slice(page->data(), page_size);
-
     {
         SCOPED_RAW_TIMER(&opts.stats->io_ns);
-        RETURN_IF_ERROR(opts.read_file->read_at_fully(opts.page_pointer.offset, slice.data, slice.size));
+
+        // If already aligned, use direct read (common fast path)
+        if (offset_adjustment == 0 && (page_size & (IO_ALIGNMENT - 1)) == 0) {
+            Slice slice(page->data(), page_size);
+            RETURN_IF_ERROR(opts.read_file->read_at_fully(original_offset, slice.data, slice.size));
+        } else {
+            // Perform 4K aligned read and copy needed bytes
+            // This improves SSD performance by avoiding partial-block reads
+            std::vector<uint8_t> aligned_buffer(aligned_read_size);
+            RETURN_IF_ERROR(opts.read_file->read_at_fully(aligned_offset, aligned_buffer.data(), aligned_read_size));
+            // Copy only the bytes we need
+            memcpy(page->data(), aligned_buffer.data() + offset_adjustment, page_size);
+        }
+
         if (opts.read_file->is_cache_hit()) {
             ++opts.stats->pages_from_local_disk;
         }

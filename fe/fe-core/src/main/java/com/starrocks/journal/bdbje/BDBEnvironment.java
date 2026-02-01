@@ -60,6 +60,7 @@ import com.starrocks.common.Pair;
 import com.starrocks.common.util.NetUtils;
 import com.starrocks.ha.BDBHA;
 import com.starrocks.ha.BDBStateChangeListener;
+import com.starrocks.ha.FastRaftManager;
 import com.starrocks.ha.FrontendNodeType;
 import com.starrocks.ha.HAProtocol;
 import com.starrocks.journal.JournalException;
@@ -216,6 +217,10 @@ public class BDBEnvironment {
             replicationConfig.setNodeType(NodeType.SECONDARY);
             replicationConfig.setConsistencyPolicy(new NoConsistencyRequiredPolicy());
         }
+
+        // CelerData: Apply fast Raft configuration for sub-2-second failover
+        // This overrides default timeouts with aggressive settings when enabled
+        FastRaftManager.applyFastRaftConfig(replicationConfig);
 
         java.util.logging.Logger parent = java.util.logging.Logger.getLogger("com.sleepycat.je");
         parent.setLevel(Level.parse(Config.bdbje_log_level));

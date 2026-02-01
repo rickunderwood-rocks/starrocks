@@ -64,6 +64,11 @@ import java.util.stream.Collectors;
  * key is tablet id. value is the related ids of this tablet
  * Checkpoint thread is no need to modify this inverted index, because this inverted index will not be written
  * into image, all metadata are in globalStateMgr, and the inverted index will be rebuilt when FE restart.
+ *
+ * CelerData Optimization: Added striped locking to reduce contention at scale.
+ * Instead of a single global lock, operations are distributed across NUM_SHARDS locks
+ * based on tablet ID modulo. This allows concurrent operations on different tablets
+ * to proceed in parallel, significantly improving throughput at scale.
  */
 public class TabletInvertedIndex implements MemoryTrackable {
     private static final Logger LOG = LogManager.getLogger(TabletInvertedIndex.class);
@@ -73,6 +78,15 @@ public class TabletInvertedIndex implements MemoryTrackable {
     public static final TabletMeta NOT_EXIST_TABLET_META = new TabletMeta(NOT_EXIST_VALUE, NOT_EXIST_VALUE,
             NOT_EXIST_VALUE, NOT_EXIST_VALUE, TStorageMedium.HDD);
 
+    // CelerData: Number of lock shards for reduced contention
+    // Using power of 2 for efficient modulo via bitwise AND
+    private static final int NUM_SHARDS = 64;
+    private static final int SHARD_MASK = NUM_SHARDS - 1;
+
+    // CelerData: Striped locks for concurrent access
+    private final QueryableReentrantReadWriteLock[] shardLocks;
+
+    // Legacy global lock for operations that need all shards (kept for backward compatibility)
     private final QueryableReentrantReadWriteLock lock = new QueryableReentrantReadWriteLock();
 
     // tablet id -> tablet meta
@@ -91,8 +105,42 @@ public class TabletInvertedIndex implements MemoryTrackable {
     private final Map<Long, Map<Long, Replica>> backingReplicaMetaTable = new Long2ObjectOpenHashMap<>();
 
     public TabletInvertedIndex() {
+        // CelerData: Initialize striped locks
+        shardLocks = new QueryableReentrantReadWriteLock[NUM_SHARDS];
+        for (int i = 0; i < NUM_SHARDS; i++) {
+            shardLocks[i] = new QueryableReentrantReadWriteLock();
+        }
     }
 
+    // CelerData: Get shard index for a tablet ID using fast bitwise AND
+    private int getShardIndex(long tabletId) {
+        // Use the lower bits of tablet ID for sharding
+        // XOR with upper bits for better distribution
+        long hash = tabletId ^ (tabletId >>> 32);
+        return (int) (hash & SHARD_MASK);
+    }
+
+    // CelerData: Shard-specific read lock for single-tablet operations
+    private void readLockShard(long tabletId) {
+        shardLocks[getShardIndex(tabletId)].sharedLockDetectingSlowLock(
+                Config.slow_lock_threshold_ms, TimeUnit.MILLISECONDS);
+    }
+
+    private void readUnlockShard(long tabletId) {
+        shardLocks[getShardIndex(tabletId)].sharedUnlock();
+    }
+
+    // CelerData: Shard-specific write lock for single-tablet operations
+    private void writeLockShard(long tabletId) {
+        shardLocks[getShardIndex(tabletId)].exclusiveLockDetectingSlowLock(
+                Config.slow_lock_threshold_ms, TimeUnit.MILLISECONDS);
+    }
+
+    private void writeUnlockShard(long tabletId) {
+        shardLocks[getShardIndex(tabletId)].exclusiveUnlock();
+    }
+
+    // Global lock methods (for backward compatibility with operations needing all shards)
     public void readLock() {
         lock.sharedLockDetectingSlowLock(Config.slow_lock_threshold_ms, TimeUnit.MILLISECONDS);
     }
@@ -119,11 +167,12 @@ public class TabletInvertedIndex implements MemoryTrackable {
     }
 
     public TabletMeta getTabletMeta(long tabletId) {
-        readLock();
+        // CelerData: Use shard-specific lock for single-tablet lookup
+        readLockShard(tabletId);
         try {
             return tabletMetaMap.get(tabletId);
         } finally {
-            readUnlock();
+            readUnlockShard(tabletId);
         }
     }
 
@@ -145,12 +194,13 @@ public class TabletInvertedIndex implements MemoryTrackable {
         if (GlobalStateMgr.isCheckpointThread()) {
             return;
         }
-        writeLock();
+        // CelerData: Use shard-specific lock for single-tablet addition
+        writeLockShard(tabletId);
         try {
             tabletMetaMap.putIfAbsent(tabletId, tabletMeta);
             LOG.debug("add tablet: {} tabletMeta: {}", tabletId, tabletMeta);
         } finally {
-            writeUnlock();
+            writeUnlockShard(tabletId);
         }
     }
 
@@ -165,19 +215,21 @@ public class TabletInvertedIndex implements MemoryTrackable {
     }
 
     public boolean tabletForceDelete(long tabletId, long backendId) {
-        readLock();
+        // CelerData: Use shard-specific lock
+        readLockShard(tabletId);
         try {
             if (forceDeleteTablets.containsKey(tabletId)) {
                 return forceDeleteTablets.get(tabletId).contains(backendId);
             }
             return false;
         } finally {
-            readUnlock();
+            readUnlockShard(tabletId);
         }
     }
 
     public void markTabletForceDelete(long tabletId, long backendId) {
-        writeLock();
+        // CelerData: Use shard-specific lock
+        writeLockShard(tabletId);
         try {
             if (forceDeleteTablets.containsKey(tabletId)) {
                 forceDeleteTablets.get(tabletId).add(backendId);
@@ -185,7 +237,7 @@ public class TabletInvertedIndex implements MemoryTrackable {
                 forceDeleteTablets.put(tabletId, Sets.newHashSet(backendId));
             }
         } finally {
-            writeUnlock();
+            writeUnlockShard(tabletId);
         }
     }
 

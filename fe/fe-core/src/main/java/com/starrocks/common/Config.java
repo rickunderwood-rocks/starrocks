@@ -580,6 +580,62 @@ public class Config extends ConfigBase {
     @ConfField
     public static int bdbje_replica_ack_timeout_second = 10;
 
+    // ======================== CelerData Fast Raft Configuration ========================
+    // These settings enable sub-2-second failover for high availability deployments.
+    // WARNING: Fast failover requires stable, low-latency network. Use with caution
+    // in environments with network jitter or high GC pause times.
+
+    /**
+     * Enable fast Raft failover mode for sub-2-second leader election.
+     * When enabled, uses aggressive heartbeat and election timeouts.
+     * Requires stable network with < 50ms latency between FE nodes.
+     */
+    @ConfField
+    public static boolean fast_raft_failover_enabled = false;
+
+    /**
+     * Fast Raft heartbeat interval in milliseconds.
+     * Leader sends heartbeats at this interval. Lower = faster failure detection.
+     * Default: 200ms (vs 30s in standard mode)
+     * Recommended range: 100-500ms
+     */
+    @ConfField
+    public static int fast_raft_heartbeat_interval_ms = 200;
+
+    /**
+     * Fast Raft election timeout in milliseconds.
+     * Time to wait before starting new election after leader failure.
+     * Should be 3-5x heartbeat interval to avoid false elections.
+     * Default: 800ms for sub-second leader detection
+     */
+    @ConfField
+    public static int fast_raft_election_timeout_ms = 800;
+
+    /**
+     * Fast Raft leader lease duration in milliseconds.
+     * Leader can serve reads without quorum check during lease period.
+     * Must be less than election timeout to maintain consistency.
+     * Default: 500ms
+     */
+    @ConfField
+    public static int fast_raft_leader_lease_ms = 500;
+
+    /**
+     * Enable pre-vote protocol to prevent disruptions from partitioned nodes.
+     * A pre-vote phase ensures a node can win an election before incrementing term.
+     * Prevents term inflation and unnecessary leader changes.
+     */
+    @ConfField
+    public static boolean fast_raft_prevote_enabled = true;
+
+    /**
+     * Maximum time in milliseconds to wait for state transfer after becoming leader.
+     * Fast mode uses shorter timeout to speed up leader readiness.
+     * Default: 1000ms
+     */
+    @ConfField
+    public static int fast_raft_state_transfer_timeout_ms = 1000;
+
     /**
      * The lock timeout of bdbje operation
      * If there are many LockTimeoutException in FE WARN log, you can try to increase this value
