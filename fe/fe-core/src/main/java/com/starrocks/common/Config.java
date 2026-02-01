@@ -636,6 +636,97 @@ public class Config extends ConfigBase {
     @ConfField
     public static int fast_raft_state_transfer_timeout_ms = 1000;
 
+    // ==================== CelerData Query SLA Configuration ====================
+
+    /**
+     * Enable Query SLA management for performance guarantees.
+     * When enabled, tracks query latencies and enforces SLA targets per resource group.
+     */
+    @ConfField
+    public static boolean query_sla_enabled = false;
+
+    /**
+     * Enable periodic SLA status reporting to logs.
+     */
+    @ConfField
+    public static boolean query_sla_reporting_enabled = true;
+
+    /**
+     * Interval in seconds for SLA status reporting.
+     */
+    @ConfField
+    public static int query_sla_reporting_interval_seconds = 60;
+
+    /**
+     * Number of latency samples to keep for percentile calculation.
+     * Larger values give more accurate percentiles but use more memory.
+     */
+    @ConfField
+    public static int query_sla_sample_window_size = 10000;
+
+    // ==================== CelerData Resource Isolation Configuration ====================
+
+    /**
+     * Enable enhanced resource isolation for multi-tenancy.
+     * When enabled, provides hard resource limits per tenant/resource group.
+     */
+    @ConfField
+    public static boolean resource_isolation_enabled = false;
+
+    /**
+     * Enable periodic resource usage reporting to logs.
+     */
+    @ConfField
+    public static boolean resource_isolation_reporting_enabled = true;
+
+    /**
+     * Interval in seconds for resource usage reporting.
+     */
+    @ConfField
+    public static int resource_isolation_reporting_interval_seconds = 30;
+
+    /**
+     * Default isolation mode for resource groups without explicit configuration.
+     * Values: SOFT, HARD, BURST
+     */
+    @ConfField
+    public static String resource_isolation_default_mode = "SOFT";
+
+    // ==================== CelerData OpenTelemetry Configuration ====================
+
+    /**
+     * Enable OpenTelemetry trace and metric export.
+     * When enabled, exports traces and metrics to OTLP-compatible backends.
+     */
+    @ConfField
+    public static boolean otel_export_enabled = false;
+
+    /**
+     * OTLP exporter endpoint URL.
+     * Example: http://localhost:4318 for OTLP/HTTP
+     */
+    @ConfField
+    public static String otel_exporter_otlp_endpoint = "http://localhost:4318";
+
+    /**
+     * Service name for OpenTelemetry traces and metrics.
+     */
+    @ConfField
+    public static String otel_service_name = "starrocks";
+
+    /**
+     * Interval in seconds for batched trace/metric export.
+     */
+    @ConfField
+    public static int otel_export_interval_seconds = 10;
+
+    /**
+     * Enable W3C Trace Context propagation for distributed tracing.
+     * When enabled, parses incoming traceparent headers and propagates context.
+     */
+    @ConfField
+    public static boolean otel_trace_context_propagation_enabled = true;
+
     /**
      * The lock timeout of bdbje operation
      * If there are many LockTimeoutException in FE WARN log, you can try to increase this value
