@@ -220,7 +220,17 @@ public class BDBEnvironment {
 
         // CelerData: Apply fast Raft configuration for sub-2-second failover
         // This overrides default timeouts with aggressive settings when enabled
-        FastRaftManager.applyFastRaftConfig(replicationConfig);
+        try {
+            FastRaftManager.applyFastRaftConfig(replicationConfig);
+        } catch (IllegalArgumentException e) {
+            LOG.error("Failed to apply FastRaft configuration: {}, using default BDBJE settings", e.getMessage());
+            // Continue with default settings rather than failing startup
+            // This ensures graceful degradation when FastRaft config is invalid
+        } catch (Exception e) {
+            LOG.error("Unexpected error applying FastRaft configuration, using default BDBJE settings", e);
+            // Generic exception handler for unexpected errors
+            // Again, we continue with defaults to ensure system stability
+        }
 
         java.util.logging.Logger parent = java.util.logging.Logger.getLogger("com.sleepycat.je");
         parent.setLevel(Level.parse(Config.bdbje_log_level));

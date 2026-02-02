@@ -361,13 +361,19 @@ public class QuerySLAManager {
         }
 
         public double getCompliancePercentage() {
-            long total = violations.p50Violations + violations.p95Violations +
-                        violations.p99Violations + sampleCount;
-            if (total == 0) return 100.0;
+            // Fix: Count only the highest violated percentile, not sum all violations
+            // A query that exceeds P99 should not be counted as P99 + P95 + P50
+            long highestViolationCount = Math.max(violations.p99Violations,
+                    Math.max(violations.p95Violations, violations.p50Violations));
 
-            long totalViolations = violations.p50Violations + violations.p95Violations +
-                                  violations.p99Violations;
-            return ((double) (sampleCount) / (sampleCount + totalViolations)) * 100.0;
+            if (sampleCount == 0 && highestViolationCount == 0) {
+                return 100.0;
+            }
+
+            long totalQueries = sampleCount + highestViolationCount;
+            if (totalQueries == 0) return 100.0;
+
+            return ((double) (sampleCount) / totalQueries) * 100.0;
         }
 
         public boolean isP50Compliant() {
@@ -489,10 +495,19 @@ public class QuerySLAManager {
                     sum += sorted[i];
                 }
 
+                // Fix: Ensure consistent percentile calculation with proper bounds checking
+                int p50Index = Math.min((int) (sampleCount * 0.50) - 1, sampleCount - 1);
+                int p95Index = Math.min((int) (sampleCount * 0.95) - 1, sampleCount - 1);
+                int p99Index = Math.min((int) (sampleCount * 0.99) - 1, sampleCount - 1);
+
+                p50Index = Math.max(0, p50Index);
+                p95Index = Math.max(0, p95Index);
+                p99Index = Math.max(0, p99Index);
+
                 return new LatencyPercentiles(
-                    sorted[(int) (sampleCount * 0.50)],
-                    sorted[(int) (sampleCount * 0.95)],
-                    sorted[(int) Math.min(sampleCount * 0.99, sampleCount - 1)],
+                    sorted[p50Index],
+                    sorted[p95Index],
+                    sorted[p99Index],
                     sorted[sampleCount - 1],
                     sorted[0],
                     (double) sum / sampleCount

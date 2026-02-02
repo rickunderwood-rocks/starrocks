@@ -69,6 +69,8 @@ public class FastRaftManager {
     private final AtomicLong totalFailoverTimeMs = new AtomicLong(0);
 
     private FastRaftManager() {
+        // Validate configuration parameters
+        validateAndApplyConfig();
         this.fastModeEnabled.set(Config.fast_raft_failover_enabled);
         LOG.info("CelerData FastRaftManager initialized: enabled={}, heartbeat={}ms, election={}ms, lease={}ms",
                 Config.fast_raft_failover_enabled,
@@ -89,42 +91,109 @@ public class FastRaftManager {
     }
 
     /**
+     * Validate and apply fast Raft configuration parameters.
+     * Ensures all timeout values are positive and within reasonable ranges.
+     * Logs warnings if configuration is invalid or suboptimal.
+     */
+    private static void validateAndApplyConfig() {
+        StringBuilder validationErrors = new StringBuilder();
+
+        // Validate heartbeat interval
+        if (Config.fast_raft_heartbeat_interval_ms <= 0) {
+            validationErrors.append("fast_raft_heartbeat_interval_ms must be > 0; ");
+        } else if (Config.fast_raft_heartbeat_interval_ms < 100 || Config.fast_raft_heartbeat_interval_ms > 5000) {
+            LOG.warn("fast_raft_heartbeat_interval_ms {} is outside recommended range [100, 5000]ms",
+                    Config.fast_raft_heartbeat_interval_ms);
+        }
+
+        // Validate election timeout
+        if (Config.fast_raft_election_timeout_ms <= 0) {
+            validationErrors.append("fast_raft_election_timeout_ms must be > 0; ");
+        } else if (Config.fast_raft_election_timeout_ms < Config.fast_raft_heartbeat_interval_ms * 2) {
+            validationErrors.append("fast_raft_election_timeout_ms must be >= 2 * heartbeat_interval; ");
+        } else if (Config.fast_raft_election_timeout_ms > 30000) {
+            LOG.warn("fast_raft_election_timeout_ms {} exceeds 30s, failover may be slow",
+                    Config.fast_raft_election_timeout_ms);
+        }
+
+        // Validate leader lease
+        if (Config.fast_raft_leader_lease_ms < 0) {
+            validationErrors.append("fast_raft_leader_lease_ms must be >= 0; ");
+        } else if (Config.fast_raft_leader_lease_ms > Config.fast_raft_election_timeout_ms) {
+            validationErrors.append("fast_raft_leader_lease_ms must be <= election_timeout; ");
+        }
+
+        // Validate state transfer timeout
+        if (Config.fast_raft_state_transfer_timeout_ms <= 0) {
+            validationErrors.append("fast_raft_state_transfer_timeout_ms must be > 0; ");
+        }
+
+        if (validationErrors.length() > 0) {
+            String errMsg = "FastRaftManager configuration validation failed: " + validationErrors.toString();
+            LOG.error(errMsg);
+            throw new IllegalArgumentException(errMsg);
+        }
+    }
+
+    /**
      * Apply fast Raft configuration to BDBJE ReplicationConfig.
      * Should be called before environment setup.
+     * All configuration parameters are validated before application.
+     *
+     * @param replicationConfig The BDBJE ReplicationConfig to modify
+     * @throws IllegalArgumentException if configuration validation fails
      */
     public static void applyFastRaftConfig(ReplicationConfig replicationConfig) {
+        if (replicationConfig == null) {
+            LOG.error("Cannot apply FastRaft config: replicationConfig is null");
+            throw new IllegalArgumentException("replicationConfig cannot be null");
+        }
+
         if (!Config.fast_raft_failover_enabled) {
             LOG.info("Fast Raft failover is disabled, using default BDBJE timeouts");
             return;
         }
 
-        // Convert milliseconds to seconds for BDBJE (with fractional support)
-        String heartbeatTimeout = formatTimeout(Config.fast_raft_heartbeat_interval_ms * 3);
-        String electionTimeout = formatTimeout(Config.fast_raft_election_timeout_ms);
+        try {
+            // Validate configuration before applying
+            validateAndApplyConfig();
 
-        // Apply fast timeouts
-        replicationConfig.setConfigParam(ReplicationConfig.REPLICA_TIMEOUT, heartbeatTimeout);
-        replicationConfig.setConfigParam(ReplicationConfig.FEEDER_TIMEOUT, heartbeatTimeout);
-        replicationConfig.setConfigParam(ReplicationConfig.ENV_UNKNOWN_STATE_TIMEOUT,
-                String.valueOf(Config.fast_raft_election_timeout_ms / 1000 + 1));
+            // Convert milliseconds to seconds for BDBJE (with fractional support)
+            String heartbeatTimeout = formatTimeout(Config.fast_raft_heartbeat_interval_ms * 3);
+            String electionTimeout = formatTimeout(Config.fast_raft_election_timeout_ms);
 
-        // Set election retransmit timeout (how often to retry election messages)
-        replicationConfig.setConfigParam(ReplicationConfig.ELECTIONS_REBROADCAST_TIMEOUT,
-                formatTimeout(Config.fast_raft_heartbeat_interval_ms));
+            // Apply fast timeouts with error handling for each parameter
+            try {
+                replicationConfig.setConfigParam(ReplicationConfig.REPLICA_TIMEOUT, heartbeatTimeout);
+                replicationConfig.setConfigParam(ReplicationConfig.FEEDER_TIMEOUT, heartbeatTimeout);
+                replicationConfig.setConfigParam(ReplicationConfig.ENV_UNKNOWN_STATE_TIMEOUT,
+                        String.valueOf(Config.fast_raft_election_timeout_ms / 1000 + 1));
 
-        // Set election primary retry for faster convergence
-        replicationConfig.setConfigParam(ReplicationConfig.ELECTIONS_PRIMARY_RETRIES, "3");
+                // Set election retransmit timeout (how often to retry election messages)
+                replicationConfig.setConfigParam(ReplicationConfig.ELECTIONS_REBROADCAST_TIMEOUT,
+                        formatTimeout(Config.fast_raft_heartbeat_interval_ms));
 
-        // Set replica ack timeout based on heartbeat
-        replicationConfig.setReplicaAckTimeout(
-                Config.fast_raft_heartbeat_interval_ms * 5, TimeUnit.MILLISECONDS);
+                // Set election primary retry for faster convergence
+                replicationConfig.setConfigParam(ReplicationConfig.ELECTIONS_PRIMARY_RETRIES, "3");
 
-        LOG.info("CelerData Fast Raft configuration applied: " +
-                        "replica_timeout={}, feeder_timeout={}, election_rebroadcast={}, " +
-                        "replica_ack_timeout={}ms",
-                heartbeatTimeout, heartbeatTimeout,
-                formatTimeout(Config.fast_raft_heartbeat_interval_ms),
-                Config.fast_raft_heartbeat_interval_ms * 5);
+                // Set replica ack timeout based on heartbeat
+                replicationConfig.setReplicaAckTimeout(
+                        Config.fast_raft_heartbeat_interval_ms * 5, TimeUnit.MILLISECONDS);
+            } catch (Exception e) {
+                LOG.error("Failed to apply Fast Raft config parameters", e);
+                throw new IllegalArgumentException("Failed to apply Fast Raft configuration: " + e.getMessage(), e);
+            }
+
+            LOG.info("CelerData Fast Raft configuration applied: " +
+                            "replica_timeout={}, feeder_timeout={}, election_rebroadcast={}, " +
+                            "replica_ack_timeout={}ms",
+                    heartbeatTimeout, heartbeatTimeout,
+                    formatTimeout(Config.fast_raft_heartbeat_interval_ms),
+                    Config.fast_raft_heartbeat_interval_ms * 5);
+        } catch (IllegalArgumentException e) {
+            LOG.error("FastRaft configuration validation failed, falling back to default settings", e);
+            throw e;
+        }
     }
 
     /**

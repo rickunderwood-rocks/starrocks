@@ -61,18 +61,25 @@ namespace starrocks {
 using strings::Substitute;
 
 // CelerData Optimization: I/O 4K alignment for SSD performance
-// Modern SSDs perform best with 4KB aligned reads
+// Modern SSDs perform best with 4KB aligned reads, which reduces the number of I/O operations
+// and allows the storage device to optimize reading.
 constexpr size_t IO_ALIGNMENT = 4096;  // 4KB alignment
 
 // Helper to calculate 4K aligned offset (round down)
+// This finds the 4K page boundary at or before the given offset
 inline size_t align_down(size_t offset) {
     return offset & ~(IO_ALIGNMENT - 1);
 }
 
 // Helper to calculate 4K aligned size (round up)
+// This calculates the number of bytes needed to include all data when reading from aligned offset
 inline size_t align_up(size_t size) {
     return (size + IO_ALIGNMENT - 1) & ~(IO_ALIGNMENT - 1);
 }
+
+// TODO: Consider implementing a thread-local aligned buffer pool to reuse allocations
+// in the hot I/O path. This would reduce allocation overhead for repeated page reads.
+// The pool should be sized appropriately based on typical aligned_read_size values.
 
 Status PageIO::compress_page_body(const BlockCompressionCodec* codec, double min_space_saving,
                                   const std::vector<Slice>& body, faststring* compressed_body) {
@@ -229,10 +236,38 @@ static Status read_page_from_file(const PageReadOptions& opts, std::unique_ptr<s
         } else {
             // Perform 4K aligned read and copy needed bytes
             // This improves SSD performance by avoiding partial-block reads
-            std::vector<uint8_t> aligned_buffer(aligned_read_size);
-            RETURN_IF_ERROR(opts.read_file->read_at_fully(aligned_offset, aligned_buffer.data(), aligned_read_size));
-            // Copy only the bytes we need
-            memcpy(page->data(), aligned_buffer.data() + offset_adjustment, page_size);
+
+            // REGRESSION FIX: Validate file size before aligned read to prevent reading beyond bounds
+            auto file_size_result = opts.read_file->stream()->get_size();
+            if (!file_size_result.ok()) {
+                return file_size_result.status();
+            }
+            const uint64_t file_size = file_size_result.value();
+
+            // Check that aligned read doesn't exceed file boundaries
+            if (aligned_offset + aligned_read_size > file_size) {
+                // If aligned read would exceed file, fall back to unaligned read
+                // This is safe since the unaligned read was already validated to be within bounds
+                Slice slice(page->data(), page_size);
+                RETURN_IF_ERROR(opts.read_file->read_at_fully(original_offset, slice.data, slice.size));
+            } else {
+                // Safe to perform aligned read
+                std::vector<uint8_t> aligned_buffer(aligned_read_size);
+                DCHECK(aligned_buffer.size() >= page_size) << "aligned_buffer size=" << aligned_buffer.size()
+                                                           << " must be >= page_size=" << page_size;
+                RETURN_IF_ERROR(opts.read_file->read_at_fully(aligned_offset, aligned_buffer.data(), aligned_read_size));
+
+                // REGRESSION FIX: Validate buffer sizes before memcpy
+                DCHECK(offset_adjustment + page_size <= aligned_buffer.size())
+                        << "memcpy would read beyond aligned_buffer bounds: offset_adjustment="
+                        << offset_adjustment << " page_size=" << page_size
+                        << " buffer_size=" << aligned_buffer.size();
+                DCHECK(page->size() >= page_size) << "page buffer size=" << page->size()
+                                                   << " must be >= page_size=" << page_size;
+
+                // Copy only the bytes we need
+                memcpy(page->data(), aligned_buffer.data() + offset_adjustment, page_size);
+            }
         }
 
         if (opts.read_file->is_cache_hit()) {

@@ -123,6 +123,28 @@ public class ResourceIsolationManager {
      * Configure resource limits for a tenant
      */
     public void setTenantLimits(String tenantId, TenantResourceLimits limits) {
+        // Fix: Validate that memory limit is positive to prevent division by zero later
+        if (limits.memoryLimitBytes <= 0) {
+            LOG.warn("CelerData Resource Isolation: Invalid memory limit {} for tenant '{}', " +
+                    "must be > 0. Using Long.MAX_VALUE as default.",
+                limits.memoryLimitBytes, tenantId);
+            limits.memoryLimitBytes = Long.MAX_VALUE;
+        }
+
+        if (limits.cpuLimitPercent <= 0 || limits.cpuLimitPercent > 100) {
+            LOG.warn("CelerData Resource Isolation: Invalid CPU limit {}% for tenant '{}', " +
+                    "must be between 1 and 100. Using 100% as default.",
+                limits.cpuLimitPercent, tenantId);
+            limits.cpuLimitPercent = 100;
+        }
+
+        if (limits.ioBandwidthMBps <= 0) {
+            LOG.warn("CelerData Resource Isolation: Invalid I/O bandwidth {} MB/s for tenant '{}', " +
+                    "must be > 0. Using Integer.MAX_VALUE as default.",
+                limits.ioBandwidthMBps, tenantId);
+            limits.ioBandwidthMBps = Integer.MAX_VALUE;
+        }
+
         tenantLimits.put(tenantId, limits);
         tenantUsage.putIfAbsent(tenantId, new TenantResourceUsage(tenantId));
 
@@ -269,6 +291,11 @@ public class ResourceIsolationManager {
         TenantResourceUsage usage = tenantUsage.get(tenantId);
 
         if (limits == null || usage == null) {
+            return 1.0;
+        }
+
+        // Fix: Validate that memory limit is > 0 to prevent division by zero
+        if (limits.memoryLimitBytes <= 0) {
             return 1.0;
         }
 

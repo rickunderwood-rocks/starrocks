@@ -61,6 +61,9 @@ import org.apache.logging.log4j.Logger;
 import java.lang.reflect.Type;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
+import java.util.concurrent.TimeUnit;
 
 import static io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST;
 import static io.netty.handler.codec.http.HttpResponseStatus.NOT_FOUND;
@@ -84,8 +87,11 @@ public class AsyncQueryAction extends RestBaseAction {
         TIMEOUT      // Query exceeded time limit
     }
 
-    // In-memory store for async queries (TODO: Replace with distributed store for HA)
-    private static final ConcurrentHashMap<String, AsyncQueryState> queryStore = new ConcurrentHashMap<>();
+    // In-memory store for async queries using bounded Guava Cache (TODO: Replace with distributed store for HA)
+    private static final Cache<String, AsyncQueryState> queryStore = CacheBuilder.newBuilder()
+            .maximumSize(10000)
+            .expireAfterWrite(1, TimeUnit.HOURS)
+            .build();
 
     // Maximum queries to keep in memory
     private static final int MAX_CACHED_QUERIES = 10000;
@@ -264,6 +270,7 @@ public class AsyncQueryAction extends RestBaseAction {
             throw new StarRocksHttpException(NOT_FOUND, "Query not found: " + queryId);
         }
 
+        // Ensure endTime is always set when query completes
         if (state.status == QueryStatus.RUNNING || state.status == QueryStatus.SUBMITTED) {
             state.status = QueryStatus.CANCELLED;
             state.endTime = System.currentTimeMillis();
@@ -272,6 +279,9 @@ public class AsyncQueryAction extends RestBaseAction {
             // KillStmt killStmt = new KillStmt(state.connectionId, true);
 
             LOG.info("Async query cancelled: id={}", queryId);
+        } else if (state.endTime == 0) {
+            // Ensure endTime is always set for terminal states
+            state.endTime = System.currentTimeMillis();
         }
 
         AsyncQueryResponse resp = new AsyncQueryResponse();
@@ -299,27 +309,13 @@ public class AsyncQueryAction extends RestBaseAction {
     }
 
     private void storeQueryState(String queryId, AsyncQueryState state) {
-        // Simple eviction if we have too many queries
-        if (queryStore.size() >= MAX_CACHED_QUERIES) {
-            evictOldQueries();
-        }
+        // Guava Cache automatically handles eviction and size limiting
+        // No manual eviction needed
         queryStore.put(queryId, state);
     }
 
     private AsyncQueryState getQueryState(String queryId) {
-        return queryStore.get(queryId);
-    }
-
-    private void evictOldQueries() {
-        long now = System.currentTimeMillis();
-        queryStore.entrySet().removeIf(entry -> {
-            AsyncQueryState state = entry.getValue();
-            // Remove completed/failed/cancelled queries older than TTL
-            if (state.status != QueryStatus.RUNNING && state.status != QueryStatus.SUBMITTED) {
-                return (now - state.endTime) > RESULT_TTL_MS;
-            }
-            return false;
-        });
+        return queryStore.getIfPresent(queryId);
     }
 
     // Request/Response DTOs

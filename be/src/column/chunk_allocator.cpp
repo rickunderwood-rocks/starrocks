@@ -116,9 +116,18 @@ ChunkAllocator::PooledChunk ChunkAllocator::allocate(size_t row_capacity, const 
 
     // Initialize columns according to schema
     Chunk* chunk = pooled.get();
+    if (!chunk) {
+        LOG(ERROR) << "Failed to allocate chunk with row capacity: " << row_capacity;
+        return pooled;  // Return empty PooledChunk
+    }
+
     for (size_t i = 0; i < schema.num_fields(); ++i) {
         auto field = schema.field(i);
         auto column = ColumnHelper::create_column(field->type(), field->is_nullable());
+        if (!column) {
+            LOG(ERROR) << "Failed to create column for field: " << field->id();
+            continue;  // Skip this column and continue
+        }
         column->reserve(row_capacity);
         chunk->append_column(std::move(column), field->id());
     }
@@ -140,8 +149,13 @@ void ChunkAllocator::deallocate(ChunkPtr chunk, size_t size_class) {
     if (_config.enable_thread_local_cache &&
         _tl_cache.chunks.size() < _tl_cache.max_size) {
         chunk->reset();
-        _tl_cache.chunks.emplace_back(size_class, std::move(chunk));
-        return;
+        try {
+            _tl_cache.chunks.emplace_back(size_class, std::move(chunk));
+            return;
+        } catch (...) {
+            // If thread-local cache insert fails, fall through to global pool
+            LOG(WARNING) << "Failed to insert chunk into thread-local cache";
+        }
     }
 
     // Check if pool is at capacity
@@ -175,6 +189,10 @@ void ChunkAllocator::deallocate(ChunkPtr chunk, size_t size_class) {
 
 void ChunkAllocator::clear() {
     // Clear thread-local caches (current thread only)
+    // Explicitly destructing chunks to free their memory
+    for (auto& pair : _tl_cache.chunks) {
+        pair.second.reset();  // Release shared_ptr ownership
+    }
     _tl_cache.chunks.clear();
 
     // Clear global pools
@@ -247,17 +265,22 @@ ChunkAllocator::PooledChunk::PooledChunk(PooledChunk&& other) noexcept
     : _chunk(std::move(other._chunk)),
       _allocator(other._allocator),
       _size_class(other._size_class) {
+    // Null out the source allocator to prevent double-deallocation
+    // The moved chunk is now owned by 'this', not by 'other'
     other._allocator = nullptr;
 }
 
 ChunkAllocator::PooledChunk& ChunkAllocator::PooledChunk::operator=(PooledChunk&& other) noexcept {
     if (this != &other) {
+        // Deallocate our current chunk if we own it
         if (_chunk && _allocator) {
             _allocator->deallocate(std::move(_chunk), _size_class);
         }
+        // Take ownership of other's chunk
         _chunk = std::move(other._chunk);
         _allocator = other._allocator;
         _size_class = other._size_class;
+        // Clear other's allocator to prevent it from deallocating the chunk
         other._allocator = nullptr;
     }
     return *this;

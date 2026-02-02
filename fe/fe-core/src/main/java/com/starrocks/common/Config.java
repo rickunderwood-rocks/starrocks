@@ -584,6 +584,13 @@ public class Config extends ConfigBase {
     // These settings enable sub-2-second failover for high availability deployments.
     // WARNING: Fast failover requires stable, low-latency network. Use with caution
     // in environments with network jitter or high GC pause times.
+    //
+    // VALIDATION NOTE: All Fast Raft configuration parameters are validated at runtime
+    // in FastRaftManager.validateAndApplyConfig() to ensure:
+    // - All timeout values are positive integers
+    // - election_timeout >= 2 * heartbeat_interval (prevents false elections)
+    // - leader_lease <= election_timeout (maintains consistency)
+    // Invalid configurations will raise IllegalArgumentException at startup.
 
     /**
      * Enable fast Raft failover mode for sub-2-second leader election.

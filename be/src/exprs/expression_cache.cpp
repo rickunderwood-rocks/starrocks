@@ -92,31 +92,35 @@ ExpressionCache::ExpressionCache(const Config& config)
     : _config(config) {}
 
 ColumnPtr ExpressionCache::get(const ExpressionFingerprint& key) {
-    std::shared_lock<std::shared_mutex> lock(_mutex);
+    // First check with shared lock - only read operations
+    {
+        std::shared_lock<std::shared_mutex> lock(_mutex);
 
-    auto it = _cache.find(key);
-    if (it == _cache.end()) {
-        _stats.misses++;
-        return nullptr;
+        auto it = _cache.find(key);
+        if (it == _cache.end()) {
+            _stats.misses.fetch_add(1, std::memory_order_relaxed);
+            return nullptr;
+        }
+
+        auto& entry = it->second.first;
+
+        // Check TTL
+        auto now = std::chrono::steady_clock::now();
+        if (now - entry.created_at > _config.ttl) {
+            _stats.misses.fetch_add(1, std::memory_order_relaxed);
+            // Don't evict here (holding shared lock), just return miss
+            return nullptr;
+        }
+
+        // Valid entry - return result with atomic stats updates only
+        auto result = entry.result;
+        _stats.hits.fetch_add(1, std::memory_order_relaxed);
+        _stats.bytes_saved.fetch_add(entry.memory_bytes, std::memory_order_relaxed);
+
+        return result;
     }
-
-    auto& entry = it->second.first;
-
-    // Check TTL
-    auto now = std::chrono::steady_clock::now();
-    if (now - entry.created_at > _config.ttl) {
-        _stats.misses++;
-        // Don't evict here (holding shared lock), just return miss
-        return nullptr;
-    }
-
-    // Update access tracking
-    entry.last_accessed = now;
-    entry.access_count++;
-    _stats.hits++;
-    _stats.bytes_saved += entry.memory_bytes;
-
-    return entry.result;
+    // Note: entry.last_accessed and access_count updates deferred for performance
+    // Consider using exclusive lock if precise tracking is required
 }
 
 void ExpressionCache::put(const ExpressionFingerprint& key, ColumnPtr result, bool deterministic) {
@@ -285,6 +289,34 @@ void ExpressionCache::evict_lru() {
         _cache.erase(it);
         _stats.evictions++;
     }
+}
+
+void ExpressionCache::evict_expired_entries() {
+    // Called periodically to remove stale TTL entries
+    std::unique_lock<std::shared_mutex> lock(_mutex);
+
+    auto now = std::chrono::steady_clock::now();
+    std::vector<ExpressionFingerprint> expired_keys;
+
+    for (auto it = _cache.begin(); it != _cache.end(); ++it) {
+        const auto& entry = it->second.first;
+        if (now - entry.created_at > _config.ttl) {
+            expired_keys.push_back(it->first);
+        }
+    }
+
+    for (const auto& key : expired_keys) {
+        auto it = _cache.find(key);
+        if (it != _cache.end()) {
+            _current_memory -= it->second.first.memory_bytes;
+            _lru_list.erase(it->second.second);
+            _cache.erase(it);
+            _stats.evictions++;
+        }
+    }
+
+    _stats.current_entries = _cache.size();
+    _stats.current_memory_bytes = _current_memory;
 }
 
 double ExpressionCache::hit_rate() const {

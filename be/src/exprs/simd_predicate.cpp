@@ -204,6 +204,12 @@ void SIMDPredicate::evaluate_sse42(
     size_t num_rows
 ) {
     constexpr size_t VECTOR_SIZE = 16 / sizeof(T);
+    // Safe calculation to prevent integer overflow
+    if (num_rows > SIZE_MAX / VECTOR_SIZE) {
+        // Fallback to scalar for very large inputs
+        evaluate_scalar<T>(data, op, value, result, num_rows);
+        return;
+    }
     size_t vector_end = (num_rows / VECTOR_SIZE) * VECTOR_SIZE;
 
     if constexpr (sizeof(T) == 4) {  // int32_t, float
@@ -218,14 +224,32 @@ void SIMDPredicate::evaluate_sse42(
                 case CompareOp::EQ:
                     cmp_result = _mm_cmpeq_epi32(data_vec, val_vec);
                     break;
+                case CompareOp::NE: {
+                    // NE = NOT EQ
+                    __m128i eq = _mm_cmpeq_epi32(data_vec, val_vec);
+                    cmp_result = _mm_xor_si128(eq, _mm_set1_epi32(-1));
+                    break;
+                }
                 case CompareOp::GT:
                     cmp_result = _mm_cmpgt_epi32(data_vec, val_vec);
                     break;
+                case CompareOp::GE: {
+                    // GE = GT | EQ
+                    __m128i gt = _mm_cmpgt_epi32(data_vec, val_vec);
+                    __m128i eq = _mm_cmpeq_epi32(data_vec, val_vec);
+                    cmp_result = _mm_or_si128(gt, eq);
+                    break;
+                }
                 case CompareOp::LT:
                     cmp_result = _mm_cmplt_epi32(data_vec, val_vec);
                     break;
+                case CompareOp::LE: {
+                    // LE = NOT GT
+                    __m128i gt = _mm_cmpgt_epi32(data_vec, val_vec);
+                    cmp_result = _mm_xor_si128(gt, _mm_set1_epi32(-1));
+                    break;
+                }
                 default:
-                    // For other ops, use scalar for remaining
                     evaluate_scalar<T>(data + i, op, value, result + i, VECTOR_SIZE);
                     continue;
             }
@@ -248,9 +272,30 @@ void SIMDPredicate::evaluate_sse42(
                 case CompareOp::EQ:
                     cmp_result = _mm_cmpeq_epi64(data_vec, val_vec);
                     break;
+                case CompareOp::NE: {
+                    __m128i eq = _mm_cmpeq_epi64(data_vec, val_vec);
+                    cmp_result = _mm_xor_si128(eq, _mm_set1_epi64x(-1LL));
+                    break;
+                }
                 case CompareOp::GT:
                     cmp_result = _mm_cmpgt_epi64(data_vec, val_vec);
                     break;
+                case CompareOp::GE: {
+                    __m128i gt = _mm_cmpgt_epi64(data_vec, val_vec);
+                    __m128i eq = _mm_cmpeq_epi64(data_vec, val_vec);
+                    cmp_result = _mm_or_si128(gt, eq);
+                    break;
+                }
+                case CompareOp::LT: {
+                    // LT: swap operands for GT
+                    cmp_result = _mm_cmpgt_epi64(val_vec, data_vec);
+                    break;
+                }
+                case CompareOp::LE: {
+                    __m128i gt = _mm_cmpgt_epi64(data_vec, val_vec);
+                    cmp_result = _mm_xor_si128(gt, _mm_set1_epi64x(-1LL));
+                    break;
+                }
                 default:
                     evaluate_scalar<T>(data + i, op, value, result + i, VECTOR_SIZE);
                     continue;
@@ -339,6 +384,11 @@ void SIMDPredicate::evaluate_avx2(
     size_t num_rows
 ) {
     constexpr size_t VECTOR_SIZE = 32 / sizeof(T);
+    // Safe calculation to prevent integer overflow
+    if (num_rows > SIZE_MAX / VECTOR_SIZE) {
+        evaluate_scalar<T>(data, op, value, result, num_rows);
+        return;
+    }
     size_t vector_end = (num_rows / VECTOR_SIZE) * VECTOR_SIZE;
 
     if constexpr (sizeof(T) == 4) {  // int32_t, float
@@ -353,9 +403,28 @@ void SIMDPredicate::evaluate_avx2(
                 case CompareOp::EQ:
                     cmp_result = _mm256_cmpeq_epi32(data_vec, val_vec);
                     break;
+                case CompareOp::NE: {
+                    __m256i eq = _mm256_cmpeq_epi32(data_vec, val_vec);
+                    cmp_result = _mm256_xor_si256(eq, _mm256_set1_epi32(-1));
+                    break;
+                }
                 case CompareOp::GT:
                     cmp_result = _mm256_cmpgt_epi32(data_vec, val_vec);
                     break;
+                case CompareOp::GE: {
+                    __m256i gt = _mm256_cmpgt_epi32(data_vec, val_vec);
+                    __m256i eq = _mm256_cmpeq_epi32(data_vec, val_vec);
+                    cmp_result = _mm256_or_si256(gt, eq);
+                    break;
+                }
+                case CompareOp::LT:
+                    cmp_result = _mm256_cmpgt_epi32(val_vec, data_vec);
+                    break;
+                case CompareOp::LE: {
+                    __m256i gt = _mm256_cmpgt_epi32(data_vec, val_vec);
+                    cmp_result = _mm256_xor_si256(gt, _mm256_set1_epi32(-1));
+                    break;
+                }
                 default:
                     evaluate_scalar<T>(data + i, op, value, result + i, VECTOR_SIZE);
                     continue;
@@ -378,9 +447,29 @@ void SIMDPredicate::evaluate_avx2(
                 case CompareOp::EQ:
                     cmp_result = _mm256_cmpeq_epi64(data_vec, val_vec);
                     break;
+                case CompareOp::NE: {
+                    __m256i eq = _mm256_cmpeq_epi64(data_vec, val_vec);
+                    cmp_result = _mm256_xor_si256(eq, _mm256_set1_epi64x(-1LL));
+                    break;
+                }
                 case CompareOp::GT:
                     cmp_result = _mm256_cmpgt_epi64(data_vec, val_vec);
                     break;
+                case CompareOp::GE: {
+                    __m256i gt = _mm256_cmpgt_epi64(data_vec, val_vec);
+                    __m256i eq = _mm256_cmpeq_epi64(data_vec, val_vec);
+                    cmp_result = _mm256_or_si256(gt, eq);
+                    break;
+                }
+                case CompareOp::LT: {
+                    cmp_result = _mm256_cmpgt_epi64(val_vec, data_vec);
+                    break;
+                }
+                case CompareOp::LE: {
+                    __m256i gt = _mm256_cmpgt_epi64(data_vec, val_vec);
+                    cmp_result = _mm256_xor_si256(gt, _mm256_set1_epi64x(-1LL));
+                    break;
+                }
                 default:
                     evaluate_scalar<T>(data + i, op, value, result + i, VECTOR_SIZE);
                     continue;
@@ -486,13 +575,19 @@ void SIMDPredicate::evaluate_avx512(
     size_t num_rows
 ) {
     constexpr size_t VECTOR_SIZE = 64 / sizeof(T);
+    // Safe calculation to prevent integer overflow
+    if (num_rows > SIZE_MAX / VECTOR_SIZE) {
+        evaluate_scalar<T>(data, op, value, result, num_rows);
+        return;
+    }
     size_t vector_end = (num_rows / VECTOR_SIZE) * VECTOR_SIZE;
 
     if constexpr (sizeof(T) == 4) {  // int32_t, float
         __m512i val_vec = _mm512_set1_epi32(*reinterpret_cast<const int32_t*>(&value));
 
         for (size_t i = 0; i < vector_end; i += VECTOR_SIZE) {
-            __m512i data_vec = _mm512_loadu_si512(data + i);
+            // Use unaligned load for safety; AVX-512 loadu handles misalignment
+            __m512i data_vec = _mm512_loadu_si512(reinterpret_cast<const void*>(data + i));
 
             __mmask16 mask;
             switch (op) {
@@ -525,7 +620,8 @@ void SIMDPredicate::evaluate_avx512(
         __m512i val_vec = _mm512_set1_epi64(*reinterpret_cast<const int64_t*>(&value));
 
         for (size_t i = 0; i < vector_end; i += VECTOR_SIZE) {
-            __m512i data_vec = _mm512_loadu_si512(data + i);
+            // Use unaligned load for safety
+            __m512i data_vec = _mm512_loadu_si512(reinterpret_cast<const void*>(data + i));
 
             __mmask8 mask;
             switch (op) {
@@ -570,10 +666,10 @@ void SIMDPredicate::combine_and_avx512(
     size_t vector_end = (num_bytes / 64) * 64;
 
     for (size_t i = 0; i < vector_end; i += 64) {
-        __m512i l = _mm512_loadu_si512(left + i);
-        __m512i r = _mm512_loadu_si512(right + i);
+        __m512i l = _mm512_loadu_si512(reinterpret_cast<const void*>(left + i));
+        __m512i r = _mm512_loadu_si512(reinterpret_cast<const void*>(right + i));
         __m512i res = _mm512_and_si512(l, r);
-        _mm512_storeu_si512(result + i, res);
+        _mm512_storeu_si512(reinterpret_cast<void*>(result + i), res);
     }
 
     for (size_t i = vector_end; i < num_bytes; ++i) {
@@ -590,10 +686,10 @@ void SIMDPredicate::combine_or_avx512(
     size_t vector_end = (num_bytes / 64) * 64;
 
     for (size_t i = 0; i < vector_end; i += 64) {
-        __m512i l = _mm512_loadu_si512(left + i);
-        __m512i r = _mm512_loadu_si512(right + i);
+        __m512i l = _mm512_loadu_si512(reinterpret_cast<const void*>(left + i));
+        __m512i r = _mm512_loadu_si512(reinterpret_cast<const void*>(right + i));
         __m512i res = _mm512_or_si512(l, r);
-        _mm512_storeu_si512(result + i, res);
+        _mm512_storeu_si512(reinterpret_cast<void*>(result + i), res);
     }
 
     for (size_t i = vector_end; i < num_bytes; ++i) {
@@ -608,14 +704,14 @@ size_t SIMDPredicate::popcount_avx512(const uint8_t* bitmap, size_t num_bytes) {
 #if defined(__AVX512VPOPCNTDQ__)
     // Direct hardware popcount if available
     for (; i + 64 <= num_bytes; i += 64) {
-        __m512i vec = _mm512_loadu_si512(bitmap + i);
+        __m512i vec = _mm512_loadu_si512(reinterpret_cast<const void*>(bitmap + i));
         __m512i popcnt = _mm512_popcnt_epi64(vec);
         count += _mm512_reduce_add_epi64(popcnt);
     }
 #else
     // Fallback to lookup table method
     for (; i + 64 <= num_bytes; i += 64) {
-        __m512i vec = _mm512_loadu_si512(bitmap + i);
+        __m512i vec = _mm512_loadu_si512(reinterpret_cast<const void*>(bitmap + i));
 
         const __m512i lookup = _mm512_setr_epi8(
             0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4,
@@ -681,25 +777,27 @@ void SIMDPredicate::apply_null_mask(
             not_null[i] = null_data[i] ? 0 : 1;
         }
 
+        // Ensure combine functions complete before not_null goes out of scope
 #if defined(__AVX512F__)
         if (level == SIMDLevel::AVX512) {
             combine_and_avx512(result, not_null.data(), result, num_rows);
-            return;
+            return;  // Early return before scope exit
         }
 #endif
 #if defined(__AVX2__)
         if (level >= SIMDLevel::AVX2) {
             combine_and_avx2(result, not_null.data(), result, num_rows);
-            return;
+            return;  // Early return before scope exit
         }
 #endif
 #if defined(__SSE4_2__)
         if (level >= SIMDLevel::SSE42) {
             combine_and_sse42(result, not_null.data(), result, num_rows);
-            return;
+            return;  // Early return before scope exit
         }
 #endif
         combine_and_scalar(result, not_null.data(), result, num_rows);
+        return;  // Ensure return before scope exit
     }
 }
 

@@ -45,11 +45,23 @@ void VectorizedHashJoinProbe::build(
 
     // Get raw key data
     const KeyType* keys = nullptr;
-    if constexpr (std::is_same_v<KeyType, int32_t>) {
+    if constexpr (std::is_same_v<KeyType, int8_t>) {
+        auto* typed = down_cast<const FixedLengthColumn<int8_t>*>(data_column);
+        keys = typed->raw_data();
+    } else if constexpr (std::is_same_v<KeyType, int16_t>) {
+        auto* typed = down_cast<const FixedLengthColumn<int16_t>*>(data_column);
+        keys = typed->raw_data();
+    } else if constexpr (std::is_same_v<KeyType, int32_t>) {
         auto* typed = down_cast<const FixedLengthColumn<int32_t>*>(data_column);
         keys = typed->raw_data();
     } else if constexpr (std::is_same_v<KeyType, int64_t>) {
         auto* typed = down_cast<const FixedLengthColumn<int64_t>*>(data_column);
+        keys = typed->raw_data();
+    } else if constexpr (std::is_same_v<KeyType, float>) {
+        auto* typed = down_cast<const FixedLengthColumn<float>*>(data_column);
+        keys = typed->raw_data();
+    } else if constexpr (std::is_same_v<KeyType, double>) {
+        auto* typed = down_cast<const FixedLengthColumn<double>*>(data_column);
         keys = typed->raw_data();
     }
 
@@ -126,11 +138,23 @@ void VectorizedHashJoinProbe::probe(
 
     // Get raw key data
     const KeyType* keys = nullptr;
-    if constexpr (std::is_same_v<KeyType, int32_t>) {
+    if constexpr (std::is_same_v<KeyType, int8_t>) {
+        auto* typed = down_cast<const FixedLengthColumn<int8_t>*>(data_column);
+        keys = typed->raw_data();
+    } else if constexpr (std::is_same_v<KeyType, int16_t>) {
+        auto* typed = down_cast<const FixedLengthColumn<int16_t>*>(data_column);
+        keys = typed->raw_data();
+    } else if constexpr (std::is_same_v<KeyType, int32_t>) {
         auto* typed = down_cast<const FixedLengthColumn<int32_t>*>(data_column);
         keys = typed->raw_data();
     } else if constexpr (std::is_same_v<KeyType, int64_t>) {
         auto* typed = down_cast<const FixedLengthColumn<int64_t>*>(data_column);
+        keys = typed->raw_data();
+    } else if constexpr (std::is_same_v<KeyType, float>) {
+        auto* typed = down_cast<const FixedLengthColumn<float>*>(data_column);
+        keys = typed->raw_data();
+    } else if constexpr (std::is_same_v<KeyType, double>) {
+        auto* typed = down_cast<const FixedLengthColumn<double>*>(data_column);
         keys = typed->raw_data();
     }
 
@@ -139,14 +163,19 @@ void VectorizedHashJoinProbe::probe(
         return;
     }
 
-    // Pre-allocate results
-    matched_build_rows.reserve(num_rows);
-    matched_probe_rows.reserve(num_rows);
-    unmatched_probe_rows.reserve(num_rows / 10);  // Assume ~10% unmatched
+    // Pre-allocate results with reasonable estimates
+    size_t estimated_matches = std::max(size_t(10), num_rows / 2);  // Estimate 50% match rate
+    matched_build_rows.reserve(estimated_matches);
+    matched_probe_rows.reserve(estimated_matches);
+    size_t estimated_unmatched = std::max(size_t(5), num_rows / 10);  // Estimate ~10% unmatched
+    unmatched_probe_rows.reserve(estimated_unmatched);
 
-    // Probe in batches
-    std::vector<ValueType> batch_results(_config.batch_size);
-    std::vector<uint8_t> batch_found(_config.batch_size);
+    // Probe in batches - allocate only what's needed per batch
+    size_t batch_alloc_size = std::min(_config.batch_size, num_rows);
+    std::vector<ValueType> batch_results;
+    std::vector<uint8_t> batch_found;
+    batch_results.reserve(batch_alloc_size);
+    batch_found.reserve(batch_alloc_size);
     size_t simd_processed = 0;
 
     size_t batch_start = 0;
@@ -171,6 +200,12 @@ void VectorizedHashJoinProbe::probe(
         }
 
         if (!batch_keys.empty()) {
+            // Ensure result vectors are sized appropriately for this batch
+            if (batch_results.size() < batch_keys.size()) {
+                batch_results.resize(batch_keys.size());
+                batch_found.resize(batch_keys.size());
+            }
+
             // Batch probe
             const_cast<VectorizedHashTable<KeyType, ValueType>&>(hash_table)
                 .probe_batch(
@@ -232,11 +267,23 @@ void HashJoinSkewDetector::analyze(const Column* key_column) {
     }
 
     const KeyType* keys = nullptr;
-    if constexpr (std::is_same_v<KeyType, int32_t>) {
+    if constexpr (std::is_same_v<KeyType, int8_t>) {
+        auto* typed = down_cast<const FixedLengthColumn<int8_t>*>(data_column);
+        keys = typed->raw_data();
+    } else if constexpr (std::is_same_v<KeyType, int16_t>) {
+        auto* typed = down_cast<const FixedLengthColumn<int16_t>*>(data_column);
+        keys = typed->raw_data();
+    } else if constexpr (std::is_same_v<KeyType, int32_t>) {
         auto* typed = down_cast<const FixedLengthColumn<int32_t>*>(data_column);
         keys = typed->raw_data();
     } else if constexpr (std::is_same_v<KeyType, int64_t>) {
         auto* typed = down_cast<const FixedLengthColumn<int64_t>*>(data_column);
+        keys = typed->raw_data();
+    } else if constexpr (std::is_same_v<KeyType, float>) {
+        auto* typed = down_cast<const FixedLengthColumn<float>*>(data_column);
+        keys = typed->raw_data();
+    } else if constexpr (std::is_same_v<KeyType, double>) {
+        auto* typed = down_cast<const FixedLengthColumn<double>*>(data_column);
         keys = typed->raw_data();
     }
 

@@ -69,6 +69,41 @@ import java.util.stream.Collectors;
  * Instead of a single global lock, operations are distributed across NUM_SHARDS locks
  * based on tablet ID modulo. This allows concurrent operations on different tablets
  * to proceed in parallel, significantly improving throughput at scale.
+ *
+ * LOCKING STRATEGY:
+ * ================
+ * 1. SINGLE TABLET OPERATIONS: Use shard-specific locks (writeLockShard/readLockShard)
+ *    - tabletForceDelete(long tabletId, long backendId)
+ *    - markTabletForceDelete(long tabletId, long backendId)
+ *    - markTabletForceDelete(long tabletId, Set<Long> backendIds)
+ *    - eraseTabletForceDelete(long tabletId, long backendId)
+ *    - getTabletMeta(long tabletId)
+ *    - addTablet(long tabletId, TabletMeta tabletMeta)
+ *    Benefits: High concurrency for operations on different tablets
+ *    Cost: Cannot safely access multiple tablets without careful lock ordering
+ *
+ * 2. MULTI-TABLET / GLOBAL OPERATIONS: Use global lock (writeLock/readLock)
+ *    - getTabletMetaList(List<Long> tabletIdList)
+ *    - getTabletIdByReplica(long replicaId)
+ *    - deleteTablet(long tabletId) - modifies multiple internal data structures
+ *    - addReplica(long tabletId, Replica replica) - affects replica maps
+ *    - deleteReplica(long tabletId, long backendId)
+ *    - getReplica(long tabletId, long backendId)
+ *    - getReplicasByTabletId(long tabletId)
+ *    - getForceDeleteTablets() - returns full forceDeleteTablets map
+ *    Benefits: Simplicity, prevents race conditions on shared state
+ *    Cost: Lower concurrency during these operations
+ *
+ * DEADLOCK PREVENTION:
+ * ====================
+ * All single-tablet operations use shard locks in a consistent manner:
+ * - Single shard lock acquired via getShardIndex(tabletId) & SHARD_MASK
+ * - Locks are acquired in increasing index order (implicit in hash function)
+ * - No nested global + shard lock combinations
+ * - Global lock methods never call shard lock methods (and vice versa)
+ *
+ * IMPORTANT: Do not mix shard locks with global locks in the same operation.
+ * If you need to access multiple tablets atomically, acquire the global lock.
  */
 public class TabletInvertedIndex implements MemoryTrackable {
     private static final Logger LOG = LogManager.getLogger(TabletInvertedIndex.class);
@@ -241,15 +276,21 @@ public class TabletInvertedIndex implements MemoryTrackable {
         }
     }
 
+    /**
+     * Mark multiple backends for force deletion on a single tablet.
+     * Uses shard-specific lock to avoid deadlock with single-backend method.
+     * Note: This method locks only the specific tablet shard.
+     */
     public void markTabletForceDelete(long tabletId, Set<Long> backendIds) {
         if (backendIds.isEmpty()) {
             return;
         }
-        writeLock();
+        // CelerData: Use shard-specific lock for single tablet
+        writeLockShard(tabletId);
         try {
             forceDeleteTablets.put(tabletId, backendIds);
         } finally {
-            writeUnlock();
+            writeUnlockShard(tabletId);
         }
     }
 
@@ -261,8 +302,14 @@ public class TabletInvertedIndex implements MemoryTrackable {
         markTabletForceDelete(tablet.getId(), tablet.getBackendIds());
     }
 
+    /**
+     * Remove a single backend from force delete set for a tablet.
+     * Uses shard-specific lock to prevent deadlock with multi-backend operations.
+     * Thread-safe: callers don't need external synchronization.
+     */
     public void eraseTabletForceDelete(long tabletId, long backendId) {
-        writeLock();
+        // CelerData: Use shard-specific lock for single tablet
+        writeLockShard(tabletId);
         try {
             if (forceDeleteTablets.containsKey(tabletId)) {
                 forceDeleteTablets.get(tabletId).remove(backendId);
@@ -271,7 +318,7 @@ public class TabletInvertedIndex implements MemoryTrackable {
                 }
             }
         } finally {
-            writeUnlock();
+            writeUnlockShard(tabletId);
         }
     }
 

@@ -89,83 +89,93 @@ void AdaptiveMemoryManager::configure(const Config& config) {
 }
 
 AllocationResult AdaptiveMemoryManager::request_memory(const AllocationRequest& request) {
-    std::lock_guard<std::mutex> lock(_mutex);
-
-    _stats.allocation_requests++;
-
     AllocationResult result;
+    size_t retry_count = 0;
+    const size_t max_retries = 3;
 
-    // Determine which budget to use
-    std::string budget_name = "query";
-    switch (request.type) {
-        case AllocationRequest::Type::CACHE:
-            budget_name = "cache";
-            break;
-        case AllocationRequest::Type::COMPACTION:
-            budget_name = "compaction";
-            break;
-        default:
-            budget_name = "query";
-            break;
-    }
+    while (retry_count < max_retries) {
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
 
-    auto& budget = _budgets[budget_name];
+            _stats.allocation_requests++;
 
-    // Check if allocation is possible
-    if (budget.allocated + request.bytes_requested <= budget.limit) {
-        // Direct allocation
-        budget.allocated += request.bytes_requested;
-        budget.peak = std::max(budget.peak, budget.allocated);
-
-        _stats.total_allocated += request.bytes_requested;
-        _stats.peak_memory = std::max(
-            _stats.peak_memory.load(),
-            _stats.total_allocated.load()
-        );
-
-        result.success = true;
-        result.bytes_allocated = request.bytes_requested;
-        result.recommended_action = AllocationResult::Action::ALLOCATED;
-
-        // Learn from allocation
-        if (_config.enable_workload_learning) {
-            auto& pattern = _workload_patterns[request.type];
-            pattern.recent_allocations.push_back(request.bytes_requested);
-            if (pattern.recent_allocations.size() > 100) {
-                pattern.recent_allocations.erase(pattern.recent_allocations.begin());
+            // Determine which budget to use
+            std::string budget_name = "query";
+            switch (request.type) {
+                case AllocationRequest::Type::CACHE:
+                    budget_name = "cache";
+                    break;
+                case AllocationRequest::Type::COMPACTION:
+                    budget_name = "compaction";
+                    break;
+                default:
+                    budget_name = "query";
+                    break;
             }
-        }
 
-        return result;
-    }
+            auto& budget = _budgets[budget_name];
 
-    // Allocation would exceed budget
-    _stats.allocation_denials++;
+            // Check if allocation is possible
+            if (budget.allocated + request.bytes_requested <= budget.limit) {
+                // Direct allocation
+                budget.allocated += request.bytes_requested;
+                budget.peak = std::max(budget.peak, budget.allocated);
 
-    result.bytes_available = budget.available();
+                _stats.total_allocated += request.bytes_requested;
+                _stats.peak_memory = std::max(
+                    _stats.peak_memory.load(),
+                    _stats.total_allocated.load()
+                );
 
-    // Determine recommended action
-    if (request.can_wait) {
-        result.recommended_action = AllocationResult::Action::WAIT_AND_RETRY;
-        result.denial_reason = "Memory budget full, waiting for release";
-    } else if (request.can_spill && request.bytes_requested > result.bytes_available) {
-        result.recommended_action = AllocationResult::Action::SPILL_TO_DISK;
-        result.denial_reason = "Insufficient memory, spill recommended";
-    } else if (result.bytes_available >= request.bytes_requested / 2) {
-        result.recommended_action = AllocationResult::Action::REDUCE_REQUEST;
-        result.denial_reason = "Reduce request to fit available memory";
-    } else {
-        result.recommended_action = AllocationResult::Action::CANCEL_QUERY;
-        result.denial_reason = "Insufficient memory, query cancellation recommended";
-    }
+                result.success = true;
+                result.bytes_allocated = request.bytes_requested;
+                result.recommended_action = AllocationResult::Action::ALLOCATED;
 
-    // Try to reclaim memory
-    if (_current_pressure >= MemoryPressureLevel::HIGH) {
-        size_t reclaimed = invoke_pressure_callbacks(request.bytes_requested);
-        if (reclaimed >= request.bytes_requested) {
-            // Retry allocation
-            return request_memory(request);
-        }
+                // Learn from allocation
+                if (_config.enable_workload_learning) {
+                    auto& pattern = _workload_patterns[request.type];
+                    pattern.recent_allocations.push_back(request.bytes_requested);
+                    if (pattern.recent_allocations.size() > 100) {
+                        pattern.recent_allocations.erase(pattern.recent_allocations.begin());
+                    }
+                }
+
+                return result;
+            }
+
+            // Allocation would exceed budget
+            _stats.allocation_denials++;
+
+            result.bytes_available = budget.available();
+
+            // Determine recommended action
+            if (request.can_wait) {
+                result.recommended_action = AllocationResult::Action::WAIT_AND_RETRY;
+                result.denial_reason = "Memory budget full, waiting for release";
+            } else if (request.can_spill && request.bytes_requested > result.bytes_available) {
+                result.recommended_action = AllocationResult::Action::SPILL_TO_DISK;
+                result.denial_reason = "Insufficient memory, spill recommended";
+            } else if (result.bytes_available >= request.bytes_requested / 2) {
+                result.recommended_action = AllocationResult::Action::REDUCE_REQUEST;
+                result.denial_reason = "Reduce request to fit available memory";
+            } else {
+                result.recommended_action = AllocationResult::Action::CANCEL_QUERY;
+                result.denial_reason = "Insufficient memory, query cancellation recommended";
+            }
+
+            // Try to reclaim memory only if pressure is high
+            if (_current_pressure >= MemoryPressureLevel::HIGH) {
+                size_t reclaimed = invoke_pressure_callbacks(request.bytes_requested);
+                if (reclaimed >= request.bytes_requested) {
+                    // Will retry after releasing lock
+                    retry_count++;
+                    continue;
+                }
+            }
+        }  // Release lock before returning
+
+        // If we get here, we couldn't allocate or reclaim
+        break;
     }
 
     return result;
@@ -174,16 +184,45 @@ AllocationResult AdaptiveMemoryManager::request_memory(const AllocationRequest& 
 void AdaptiveMemoryManager::release_memory(const std::string& requester, size_t bytes) {
     std::lock_guard<std::mutex> lock(_mutex);
 
-    // Find the budget for this requester
-    for (auto& [name, budget] : _budgets) {
-        if (budget.allocated >= bytes) {
-            budget.allocated -= bytes;
+    // Try to find the budget that this requester belongs to by name match first
+    auto it = _budgets.find(requester);
+    if (it != _budgets.end()) {
+        if (it->second.allocated >= bytes) {
+            it->second.allocated -= bytes;
             _stats.total_released += bytes;
             return;
         }
     }
 
-    LOG(WARNING) << "Memory release for unknown allocation: " << bytes << " bytes from " << requester;
+    // If direct match fails, release proportionally from all budgets
+    // This handles cases where requester name doesn't match budget name
+    size_t total_allocated = 0;
+    for (const auto& [name, budget] : _budgets) {
+        total_allocated += budget.allocated;
+    }
+
+    if (total_allocated == 0) {
+        LOG(WARNING) << "Memory release attempted but no allocated memory: " << bytes << " bytes from " << requester;
+        return;
+    }
+
+    // Release proportionally from each budget based on its current allocation
+    size_t remaining = bytes;
+    for (auto& [name, budget] : _budgets) {
+        if (remaining == 0) break;
+        if (budget.allocated == 0) continue;
+
+        double proportion = static_cast<double>(budget.allocated) / total_allocated;
+        size_t to_release = std::min(static_cast<size_t>(bytes * proportion), budget.allocated);
+        budget.allocated -= to_release;
+        remaining -= to_release;
+    }
+
+    _stats.total_released += (bytes - remaining);
+
+    if (remaining > 0) {
+        LOG(WARNING) << "Could not fully release memory: " << remaining << " bytes from " << requester;
+    }
 }
 
 MemoryBudget AdaptiveMemoryManager::get_budget(const std::string& name) const {
@@ -445,11 +484,12 @@ bool MemoryTracker::try_allocate(size_t bytes) {
         return false;
     }
 
-    // Check parent
+    // Check parent before updating local state
     if (_parent && !_parent->try_allocate(bytes)) {
         return false;
     }
 
+    // Parent allocation succeeded, now update local consumption
     _consumption += bytes;
     size_t peak = _peak_consumption.load();
     while (current + bytes > peak) {
@@ -598,8 +638,14 @@ void AdaptiveBufferPool::release(void* buffer, size_t size) {
     sc.releases++;
 
     if (_total_pooled_bytes + sc.buffer_size <= _config.max_pool_size) {
-        sc.free_buffers.push(buffer);
-        _total_pooled_bytes += sc.buffer_size;
+        try {
+            sc.free_buffers.push(buffer);
+            _total_pooled_bytes += sc.buffer_size;
+        } catch (...) {
+            // If push() throws, ensure we don't leak the buffer
+            free(buffer);
+            throw;
+        }
     } else {
         free(buffer);
     }

@@ -19,6 +19,7 @@ import com.starrocks.common.Config;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -361,6 +362,17 @@ public class OpenTelemetryIntegration {
             }
 
             int responseCode = conn.getResponseCode();
+
+            // Properly consume the response stream to prevent resource leak
+            try (InputStream is = responseCode >= 400 ? conn.getErrorStream() : conn.getInputStream()) {
+                if (is != null) {
+                    byte[] buffer = new byte[1024];
+                    while (is.read(buffer) != -1) {
+                        // Consume the stream to properly close the connection
+                    }
+                }
+            }
+
             if (responseCode >= 400) {
                 throw new RuntimeException("OTLP export failed with status: " + responseCode);
             }
@@ -590,12 +602,12 @@ public class OpenTelemetryIntegration {
         public String toOtlpJson() {
             StringBuilder sb = new StringBuilder();
             sb.append("{");
-            sb.append("\"traceId\":\"").append(traceId).append("\",");
-            sb.append("\"spanId\":\"").append(spanId).append("\",");
+            sb.append("\"traceId\":\"").append(escapeJsonString(traceId)).append("\",");
+            sb.append("\"spanId\":\"").append(escapeJsonString(spanId)).append("\",");
             if (parentSpanId != null) {
-                sb.append("\"parentSpanId\":\"").append(parentSpanId).append("\",");
+                sb.append("\"parentSpanId\":\"").append(escapeJsonString(parentSpanId)).append("\",");
             }
-            sb.append("\"name\":\"").append(name).append("\",");
+            sb.append("\"name\":\"").append(escapeJsonString(name)).append("\",");
             sb.append("\"startTimeUnixNano\":").append(startTimeNanos).append(",");
             sb.append("\"endTimeUnixNano\":").append(endTimeNanos).append(",");
 
@@ -604,12 +616,15 @@ public class OpenTelemetryIntegration {
             boolean first = true;
             for (Map.Entry<String, Object> attr : attributes.entrySet()) {
                 if (!first) sb.append(",");
-                sb.append("{\"key\":\"").append(attr.getKey()).append("\",");
-                if (attr.getValue() instanceof Number) {
+                sb.append("{\"key\":\"").append(escapeJsonString(attr.getKey())).append("\",");
+                if (attr.getValue() == null) {
+                    // Handle null values properly in JSON
+                    sb.append("\"value\":{\"stringValue\":\"null\"}}");
+                } else if (attr.getValue() instanceof Number) {
                     sb.append("\"value\":{\"intValue\":").append(attr.getValue()).append("}}");
                 } else {
                     sb.append("\"value\":{\"stringValue\":\"")
-                      .append(String.valueOf(attr.getValue()).replace("\"", "\\\""))
+                      .append(escapeJsonString(String.valueOf(attr.getValue())))
                       .append("\"}}");
                 }
                 first = false;
@@ -618,6 +633,17 @@ public class OpenTelemetryIntegration {
 
             sb.append("}");
             return sb.toString();
+        }
+
+        private static String escapeJsonString(String str) {
+            if (str == null) {
+                return "";
+            }
+            return str.replace("\\", "\\\\")
+                      .replace("\"", "\\\"")
+                      .replace("\n", "\\n")
+                      .replace("\r", "\\r")
+                      .replace("\t", "\\t");
         }
     }
 
@@ -653,8 +679,8 @@ public class OpenTelemetryIntegration {
         public String toOtlpJson() {
             StringBuilder sb = new StringBuilder();
             sb.append("{");
-            sb.append("\"name\":\"").append(name).append("\",");
-            sb.append("\"unit\":\"").append(unit).append("\",");
+            sb.append("\"name\":\"").append(escapeJsonString(name)).append("\",");
+            sb.append("\"unit\":\"").append(escapeJsonString(unit)).append("\",");
             sb.append("\"gauge\":{\"dataPoints\":[{");
             sb.append("\"asDouble\":").append(value).append(",");
             sb.append("\"timeUnixNano\":").append(timestampMs * 1_000_000L).append(",");
@@ -664,14 +690,27 @@ public class OpenTelemetryIntegration {
             boolean first = true;
             for (Map.Entry<String, String> attr : attributes.entrySet()) {
                 if (!first) sb.append(",");
-                sb.append("{\"key\":\"").append(attr.getKey())
-                  .append("\",\"value\":{\"stringValue\":\"").append(attr.getValue()).append("\"}}");
+                // Handle null values in attributes
+                String attrValue = attr.getValue() != null ? attr.getValue() : "null";
+                sb.append("{\"key\":\"").append(escapeJsonString(attr.getKey()))
+                  .append("\",\"value\":{\"stringValue\":\"").append(escapeJsonString(attrValue)).append("\"}}");
                 first = false;
             }
             sb.append("]");
 
             sb.append("}]}}");
             return sb.toString();
+        }
+
+        private static String escapeJsonString(String str) {
+            if (str == null) {
+                return "";
+            }
+            return str.replace("\\", "\\\\")
+                      .replace("\"", "\\\"")
+                      .replace("\n", "\\n")
+                      .replace("\r", "\\r")
+                      .replace("\t", "\\t");
         }
     }
 }

@@ -55,6 +55,9 @@ public class StateChangeExecutor extends Daemon {
         super(name, STATE_CHANGE_CHECK_INTERVAL_MS);
         typeTransferQueue = Queues.newLinkedBlockingDeque();
         executions = new ArrayList<>();
+        // CelerData: Initialize lastLeaderLostTime and lastLeaderGainedTime with meaningful defaults
+        this.lastLeaderLostTime = 0;  // 0 indicates leader loss time not yet recorded
+        this.lastLeaderGainedTime = 0;  // 0 indicates no successful leader election yet
     }
 
     public void registerStateChangeExecution(StateChangeExecution execution) {
@@ -146,22 +149,47 @@ public class StateChangeExecutor extends Daemon {
                 case FOLLOWER: {
                     switch (newType) {
                         case LEADER: {
-                            // CelerData Fast Raft: Measure failover time
+                            // CelerData Fast Raft: Measure failover time with error handling
                             long failoverStartTime = lastLeaderLostTime > 0 ? lastLeaderLostTime : System.currentTimeMillis();
-                            for (StateChangeExecution execution : executions) {
-                                execution.transferToLeader();
+                            try {
+                                for (StateChangeExecution execution : executions) {
+                                    execution.transferToLeader();
+                                }
+                                lastLeaderGainedTime = System.currentTimeMillis();
+                                long failoverDuration = lastLeaderGainedTime - failoverStartTime;
+                                LOG.info("CelerData Fast Raft: FOLLOWER->LEADER transition completed in {}ms", failoverDuration);
+
+                                // Wrap FastRaftManager calls in try-catch to prevent leader election interruption
+                                try {
+                                    FastRaftManager.getInstance().recordFailover(failoverDuration);
+                                } catch (Exception e) {
+                                    LOG.error("Failed to record failover metrics in FastRaftManager, continuing anyway", e);
+                                    // Continue despite FastRaftManager error - failover is critical
+                                }
+                            } catch (Exception e) {
+                                LOG.error("Failed during FOLLOWER->LEADER state transition", e);
+                                // Attempt to notify FastRaftManager of failure
+                                try {
+                                    lastLeaderGainedTime = System.currentTimeMillis();
+                                    FastRaftManager.getInstance().recordFailover(lastLeaderGainedTime - failoverStartTime);
+                                } catch (Exception ignored) {
+                                    LOG.error("Also failed to record failover due to exception", ignored);
+                                }
+                                throw e;
                             }
-                            lastLeaderGainedTime = System.currentTimeMillis();
-                            long failoverDuration = lastLeaderGainedTime - failoverStartTime;
-                            LOG.info("CelerData Fast Raft: FOLLOWER->LEADER transition completed in {}ms", failoverDuration);
-                            FastRaftManager.getInstance().recordFailover(failoverDuration);
                             break;
                         }
                         case UNKNOWN: {
                             // CelerData Fast Raft: Record when we lose leader contact
                             lastLeaderLostTime = System.currentTimeMillis();
-                            for (StateChangeExecution execution : executions) {
-                                execution.transferToNonLeader(newType);
+                            LOG.info("CelerData Fast Raft: Leader contact lost at {}", lastLeaderLostTime);
+                            try {
+                                for (StateChangeExecution execution : executions) {
+                                    execution.transferToNonLeader(newType);
+                                }
+                            } catch (Exception e) {
+                                LOG.error("Failed during FOLLOWER->UNKNOWN state transition", e);
+                                throw e;
                             }
                             break;
                         }
