@@ -21,6 +21,8 @@
 #include <string_view>
 #include <unordered_map>
 
+#include "base/testutil/sync_point.h"
+#include "base/utility/defer_op.h"
 #include "common/status.h"
 #include "fs/fs.h"
 #include "gutil/stl_util.h"
@@ -35,8 +37,6 @@
 #include "storage/lake/tablet_retain_info.h"
 #include "storage/lake/update_manager.h"
 #include "storage/protobuf_file.h"
-#include "testutil/sync_point.h"
-#include "util/defer_op.h"
 #include "util/raw_container.h"
 
 namespace starrocks::lake {

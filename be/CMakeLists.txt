@@ -395,7 +395,6 @@ set(WL_LINK_DYNAMIC "-Wl,-Bdynamic")
 set(STARROCKS_LINK_LIBS
     ${WL_START_GROUP}
     Agent
-    Common
     Column
     Connector
     Exec
@@ -417,10 +416,10 @@ set(STARROCKS_LINK_LIBS
     TestUtil
     Tools
     Geo
-    Simd
     Cache
     orc
     ${WL_END_GROUP}
+    Common
     Base
     Gutil
     StarRocksGen
@@ -743,7 +742,6 @@ add_subdirectory(${SRC_DIR}/storage)
 add_subdirectory(${SRC_DIR}/runtime)
 add_subdirectory(${SRC_DIR}/serde)
 add_subdirectory(${SRC_DIR}/service)
-add_subdirectory(${SRC_DIR}/simd)
 add_subdirectory(${SRC_DIR}/testutil)
 add_subdirectory(${SRC_DIR}/types)
 add_subdirectory(${SRC_DIR}/udf)

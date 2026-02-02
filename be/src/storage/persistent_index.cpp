@@ -18,6 +18,11 @@
 #include <numeric>
 #include <utility>
 
+#include "base/concurrency/stopwatch.hpp"
+#include "base/hash/xxh3.h"
+#include "base/string/faststring.h"
+#include "base/testutil/sync_point.h"
+#include "base/utility/defer_op.h"
 #include "fs/fs.h"
 #include "gutil/strings/escaping.h"
 #include "gutil/strings/substitute.h"
@@ -35,18 +40,13 @@
 #include "storage/tablet_meta_manager.h"
 #include "storage/tablet_updates.h"
 #include "storage/update_manager.h"
-#include "testutil/sync_point.h"
 #include "util/bit_util.h"
 #include "util/coding.h"
 #include "util/crc32c.h"
 #include "util/debug_util.h"
-#include "util/defer_op.h"
 #include "util/failpoint/fail_point.h"
-#include "util/faststring.h"
 #include "util/filesystem_util.h"
 #include "util/raw_container.h"
-#include "util/stopwatch.hpp"
-#include "util/xxh3.h"
 
 namespace starrocks {
 

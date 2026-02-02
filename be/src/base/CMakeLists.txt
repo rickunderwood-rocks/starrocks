@@ -15,6 +15,30 @@
 set(LIBRARY_OUTPUT_PATH "${BUILD_DIR}/src/base")
 
 ADD_BE_LIB(Base
+  concurrency/await.cpp
+  concurrency/spinlock.cpp
+  crypto/md5.cpp
+  crypto/sha.cpp
+  crypto/sm3.cpp
+  gc/gc_helper_smoothstep.cpp
+  hash/crc32c_sse_simd.cpp
+  hash/murmur_hash3.cpp
+  json/easy_json.cc
+  path/file_util.cpp
+  path/path_builder.cpp
+  path/path_util.cpp
+  random/random.cc
+  simd/expand.cpp
+  stats/ndv_estimator.cpp
+  string/faststring.cc
+  string/slice.cpp
+  string/utf8_check.cpp
+  system/errno.cpp
+  template/mustache/mustache.cc
+  testutil/assert.cpp
+  testutil/sync_point.cc
+  testutil/sync_point_impl.cc
+  uuid/uuid_generator.cpp
   status.cpp
   statusor.cpp
 )
