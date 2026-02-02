@@ -169,8 +169,8 @@ public class FastRaftManager {
                 replicationConfig.setConfigParam(ReplicationConfig.ENV_UNKNOWN_STATE_TIMEOUT,
                         String.valueOf(Config.fast_raft_election_timeout_ms / 1000 + 1));
 
-                // Set election retransmit timeout (how often to retry election messages)
-                replicationConfig.setConfigParam(ReplicationConfig.ELECTIONS_REBROADCAST_TIMEOUT,
+                // Set election rebroadcast period (how often to retry election messages)
+                replicationConfig.setConfigParam(ReplicationConfig.ELECTIONS_REBROADCAST_PERIOD,
                         formatTimeout(Config.fast_raft_heartbeat_interval_ms));
 
                 // Set election primary retry for faster convergence

@@ -162,7 +162,13 @@ public class AsyncQueryAction extends RestBaseAction {
      */
     private void handleSubmit(BaseRequest request, BaseResponse response) throws StarRocksHttpException {
         // Parse request body
-        AsyncQueryRequest queryRequest = parseRequestBody(request.getContent());
+        String content;
+        try {
+            content = request.getContent();
+        } catch (DdlException e) {
+            throw new StarRocksHttpException(BAD_REQUEST, "Failed to read request body: " + e.getMessage());
+        }
+        AsyncQueryRequest queryRequest = parseRequestBody(content);
 
         // Generate unique query ID
         String queryId = UUIDUtil.genUUID().toString();
