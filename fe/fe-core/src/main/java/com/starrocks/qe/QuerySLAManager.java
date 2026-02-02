@@ -15,7 +15,6 @@
 package com.starrocks.qe;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.Maps;
 import com.starrocks.common.Config;
 import com.starrocks.thrift.TWorkGroup;
 import org.apache.logging.log4j.LogManager;
@@ -92,10 +91,10 @@ public class QuerySLAManager {
         // Schedule periodic SLA status reporting
         if (Config.query_sla_reporting_enabled) {
             scheduler.scheduleAtFixedRate(
-                this::reportSLAStatus,
-                Config.query_sla_reporting_interval_seconds,
-                Config.query_sla_reporting_interval_seconds,
-                TimeUnit.SECONDS
+                    this::reportSLAStatus,
+                    Config.query_sla_reporting_interval_seconds,
+                    Config.query_sla_reporting_interval_seconds,
+                    TimeUnit.SECONDS
             );
         }
 
@@ -119,10 +118,10 @@ public class QuerySLAManager {
     public void defineSLA(String resourceGroup, SLADefinition definition) {
         slaDefinitions.put(resourceGroup, definition);
         latencyTrackers.putIfAbsent(resourceGroup, new LatencyTracker(
-            Config.query_sla_sample_window_size));
+                Config.query_sla_sample_window_size));
         violationCounters.putIfAbsent(resourceGroup, new SLAViolationCounter());
         LOG.info("CelerData SLA defined for resource group '{}': P50={}ms, P95={}ms, P99={}ms",
-            resourceGroup, definition.p50TargetMs, definition.p95TargetMs, definition.p99TargetMs);
+                resourceGroup, definition.p50TargetMs, definition.p95TargetMs, definition.p99TargetMs);
     }
 
     /**
@@ -172,12 +171,12 @@ public class QuerySLAManager {
 
             // Notify listeners
             SLAViolationEvent event = new SLAViolationEvent(
-                resourceGroup, violationType, latencyMs, sla);
+                    resourceGroup, violationType, latencyMs, sla);
             notifyViolationListeners(event);
 
             if (violationType == SLAViolationType.P99_EXCEEDED) {
                 LOG.warn("CelerData SLA VIOLATION [P99]: resource_group={}, latency={}ms, target={}ms",
-                    resourceGroup, latencyMs, sla.p99TargetMs);
+                        resourceGroup, latencyMs, sla.p99TargetMs);
             }
         }
     }
@@ -281,12 +280,12 @@ public class QuerySLAManager {
                 if (status != null) {
                     LOG.info("CelerData SLA Report [{}]: P50={}ms (target={}ms), P95={}ms (target={}ms), " +
                             "P99={}ms (target={}ms), samples={}, compliance={:.2f}%",
-                        group,
-                        status.currentPercentiles.p50, status.slaDefinition.p50TargetMs,
-                        status.currentPercentiles.p95, status.slaDefinition.p95TargetMs,
-                        status.currentPercentiles.p99, status.slaDefinition.p99TargetMs,
-                        status.sampleCount,
-                        status.getCompliancePercentage());
+                            group,
+                            status.currentPercentiles.p50, status.slaDefinition.p50TargetMs,
+                            status.currentPercentiles.p95, status.slaDefinition.p95TargetMs,
+                            status.currentPercentiles.p99, status.slaDefinition.p99TargetMs,
+                            status.sampleCount,
+                            status.getCompliancePercentage());
                 }
             }
         } catch (Exception e) {
@@ -371,7 +370,9 @@ public class QuerySLAManager {
             }
 
             long totalQueries = sampleCount + highestViolationCount;
-            if (totalQueries == 0) return 100.0;
+            if (totalQueries == 0) {
+                return 100.0;
+            }
 
             return ((double) (sampleCount) / totalQueries) * 100.0;
         }

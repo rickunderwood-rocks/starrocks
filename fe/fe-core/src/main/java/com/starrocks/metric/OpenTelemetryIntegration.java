@@ -128,22 +128,22 @@ public class OpenTelemetryIntegration {
         // Schedule periodic export
         if (Config.otel_export_enabled) {
             scheduler.scheduleAtFixedRate(
-                this::exportTraces,
-                Config.otel_export_interval_seconds,
-                Config.otel_export_interval_seconds,
-                TimeUnit.SECONDS
+                    this::exportTraces,
+                    Config.otel_export_interval_seconds,
+                    Config.otel_export_interval_seconds,
+                    TimeUnit.SECONDS
             );
 
             scheduler.scheduleAtFixedRate(
-                this::exportMetrics,
-                Config.otel_export_interval_seconds,
-                Config.otel_export_interval_seconds,
-                TimeUnit.SECONDS
+                    this::exportMetrics,
+                    Config.otel_export_interval_seconds,
+                    Config.otel_export_interval_seconds,
+                    TimeUnit.SECONDS
             );
         }
 
         LOG.info("CelerData OpenTelemetry Integration initialized: endpoint={}, service={}",
-            otlpEndpoint, serviceName);
+                otlpEndpoint, serviceName);
     }
 
     public static OpenTelemetryIntegration getInstance() {
@@ -233,7 +233,7 @@ public class OpenTelemetryIntegration {
             }
 
             LOG.debug("CelerData OTEL: Ended trace {} for query {} (success={})",
-                ctx.traceId, queryId, success);
+                    ctx.traceId, queryId, success);
         }
     }
 
@@ -249,7 +249,7 @@ public class OpenTelemetryIntegration {
      */
     public void recordMetric(String name, double value, String unit, Map<String, String> attributes) {
         MetricDataPoint dataPoint = new MetricDataPoint(
-            name, value, unit, System.currentTimeMillis(), attributes
+                name, value, unit, System.currentTimeMillis(), attributes
         );
 
         synchronized (metricBufferLock) {
@@ -389,9 +389,11 @@ public class OpenTelemetryIntegration {
         // Resource attributes
         boolean first = true;
         for (Map.Entry<String, String> attr : resourceAttributes.entrySet()) {
-            if (!first) sb.append(",");
+            if (!first) {
+                sb.append(",");
+            }
             sb.append("{\"key\":\"").append(attr.getKey())
-              .append("\",\"value\":{\"stringValue\":\"").append(attr.getValue()).append("\"}}");
+                    .append("\",\"value\":{\"stringValue\":\"").append(attr.getValue()).append("\"}}");
             first = false;
         }
         sb.append("]},");
@@ -400,7 +402,9 @@ public class OpenTelemetryIntegration {
         sb.append("\"scopeSpans\":[{\"spans\":[");
         first = true;
         for (SpanData span : spans) {
-            if (!first) sb.append(",");
+            if (!first) {
+                sb.append(",");
+            }
             sb.append(span.toOtlpJson());
             first = false;
         }
@@ -417,9 +421,11 @@ public class OpenTelemetryIntegration {
         // Resource attributes
         boolean first = true;
         for (Map.Entry<String, String> attr : resourceAttributes.entrySet()) {
-            if (!first) sb.append(",");
+            if (!first) {
+                sb.append(",");
+            }
             sb.append("{\"key\":\"").append(attr.getKey())
-              .append("\",\"value\":{\"stringValue\":\"").append(attr.getValue()).append("\"}}");
+                    .append("\",\"value\":{\"stringValue\":\"").append(attr.getValue()).append("\"}}");
             first = false;
         }
         sb.append("]},");
@@ -428,7 +434,9 @@ public class OpenTelemetryIntegration {
         sb.append("\"scopeMetrics\":[{\"metrics\":[");
         first = true;
         for (MetricDataPoint metric : metrics) {
-            if (!first) sb.append(",");
+            if (!first) {
+                sb.append(",");
+            }
             sb.append(metric.toOtlpJson());
             first = false;
         }
@@ -446,7 +454,9 @@ public class OpenTelemetryIntegration {
     }
 
     private String truncateSql(String sql) {
-        if (sql == null) return "";
+        if (sql == null) {
+            return "";
+        }
         if (sql.length() > 1000) {
             return sql.substring(0, 1000) + "...";
         }
@@ -615,7 +625,9 @@ public class OpenTelemetryIntegration {
             sb.append("\"attributes\":[");
             boolean first = true;
             for (Map.Entry<String, Object> attr : attributes.entrySet()) {
-                if (!first) sb.append(",");
+                if (!first) {
+                    sb.append(",");
+                }
                 sb.append("{\"key\":\"").append(escapeJsonString(attr.getKey())).append("\",");
                 if (attr.getValue() == null) {
                     // Handle null values properly in JSON
@@ -624,8 +636,8 @@ public class OpenTelemetryIntegration {
                     sb.append("\"value\":{\"intValue\":").append(attr.getValue()).append("}}");
                 } else {
                     sb.append("\"value\":{\"stringValue\":\"")
-                      .append(escapeJsonString(String.valueOf(attr.getValue())))
-                      .append("\"}}");
+                            .append(escapeJsonString(String.valueOf(attr.getValue())))
+                            .append("\"}}");
                 }
                 first = false;
             }
@@ -689,11 +701,13 @@ public class OpenTelemetryIntegration {
             sb.append("\"attributes\":[");
             boolean first = true;
             for (Map.Entry<String, String> attr : attributes.entrySet()) {
-                if (!first) sb.append(",");
+                if (!first) {
+                    sb.append(",");
+                }
                 // Handle null values in attributes
                 String attrValue = attr.getValue() != null ? attr.getValue() : "null";
                 sb.append("{\"key\":\"").append(escapeJsonString(attr.getKey()))
-                  .append("\",\"value\":{\"stringValue\":\"").append(escapeJsonString(attrValue)).append("\"}}");
+                        .append("\",\"value\":{\"stringValue\":\"").append(escapeJsonString(attrValue)).append("\"}}");
                 first = false;
             }
             sb.append("]");

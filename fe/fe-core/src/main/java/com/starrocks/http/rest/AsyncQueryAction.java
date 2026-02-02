@@ -14,6 +14,31 @@
 
 package com.starrocks.http.rest;
 
+import com.google.common.base.Strings;
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
+import com.google.gson.Gson;
+import com.google.gson.JsonSyntaxException;
+import com.google.gson.reflect.TypeToken;
+import com.starrocks.common.DdlException;
+import com.starrocks.common.StarRocksHttpException;
+import com.starrocks.common.util.UUIDUtil;
+import com.starrocks.http.ActionController;
+import com.starrocks.http.BaseRequest;
+import com.starrocks.http.BaseResponse;
+import com.starrocks.http.IllegalArgException;
+import io.netty.handler.codec.http.HttpMethod;
+import io.netty.handler.codec.http.HttpResponseStatus;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import java.lang.reflect.Type;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+
+import static io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST;
+import static io.netty.handler.codec.http.HttpResponseStatus.NOT_FOUND;
+
 /**
  * CelerData Async Query REST API for AI Agents
  *
@@ -38,37 +63,7 @@ package com.starrocks.http.rest;
  *
  *   4. Cancel: curl -X POST '/api/v1/async_query/abc123/cancel'
  *      Response: {"query_id": "abc123", "status": "CANCELLED"}
- */
-
-import com.google.common.base.Strings;
-import com.google.gson.Gson;
-import com.google.gson.JsonSyntaxException;
-import com.google.gson.reflect.TypeToken;
-import com.starrocks.common.DdlException;
-import com.starrocks.common.StarRocksHttpException;
-import com.starrocks.common.util.UUIDUtil;
-import com.starrocks.http.ActionController;
-import com.starrocks.http.BaseRequest;
-import com.starrocks.http.BaseResponse;
-import com.starrocks.http.HttpConnectContext;
-import com.starrocks.http.IllegalArgException;
-import com.starrocks.qe.ConnectContext;
-import io.netty.handler.codec.http.HttpMethod;
-import io.netty.handler.codec.http.HttpResponseStatus;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-
-import java.lang.reflect.Type;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import com.google.common.cache.Cache;
-import com.google.common.cache.CacheBuilder;
-import java.util.concurrent.TimeUnit;
-
-import static io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST;
-import static io.netty.handler.codec.http.HttpResponseStatus.NOT_FOUND;
-
-/**
+ *
  * Async Query Action for AI Agent integration.
  * Provides non-blocking query execution with submit/poll/cancel semantics.
  */
@@ -88,7 +83,7 @@ public class AsyncQueryAction extends RestBaseAction {
     }
 
     // In-memory store for async queries using bounded Guava Cache (TODO: Replace with distributed store for HA)
-    private static final Cache<String, AsyncQueryState> queryStore = CacheBuilder.newBuilder()
+    private static final Cache<String, AsyncQueryState> QUERY_STORE = CacheBuilder.newBuilder()
             .maximumSize(10000)
             .expireAfterWrite(1, TimeUnit.HOURS)
             .build();
@@ -311,11 +306,11 @@ public class AsyncQueryAction extends RestBaseAction {
     private void storeQueryState(String queryId, AsyncQueryState state) {
         // Guava Cache automatically handles eviction and size limiting
         // No manual eviction needed
-        queryStore.put(queryId, state);
+        QUERY_STORE.put(queryId, state);
     }
 
     private AsyncQueryState getQueryState(String queryId) {
-        return queryStore.getIfPresent(queryId);
+        return QUERY_STORE.getIfPresent(queryId);
     }
 
     // Request/Response DTOs

@@ -91,17 +91,17 @@ public class ResourceIsolationManager {
 
         // Schedule periodic resource usage collection
         scheduler.scheduleAtFixedRate(
-            this::collectResourceUsage,
-            5, 5, TimeUnit.SECONDS
+                this::collectResourceUsage,
+                5, 5, TimeUnit.SECONDS
         );
 
         // Schedule periodic reporting
         if (Config.resource_isolation_reporting_enabled) {
             scheduler.scheduleAtFixedRate(
-                this::reportResourceUsage,
-                Config.resource_isolation_reporting_interval_seconds,
-                Config.resource_isolation_reporting_interval_seconds,
-                TimeUnit.SECONDS
+                    this::reportResourceUsage,
+                    Config.resource_isolation_reporting_interval_seconds,
+                    Config.resource_isolation_reporting_interval_seconds,
+                    TimeUnit.SECONDS
             );
         }
 
@@ -127,21 +127,21 @@ public class ResourceIsolationManager {
         if (limits.memoryLimitBytes <= 0) {
             LOG.warn("CelerData Resource Isolation: Invalid memory limit {} for tenant '{}', " +
                     "must be > 0. Using Long.MAX_VALUE as default.",
-                limits.memoryLimitBytes, tenantId);
+                    limits.memoryLimitBytes, tenantId);
             limits.memoryLimitBytes = Long.MAX_VALUE;
         }
 
         if (limits.cpuLimitPercent <= 0 || limits.cpuLimitPercent > 100) {
             LOG.warn("CelerData Resource Isolation: Invalid CPU limit {}% for tenant '{}', " +
                     "must be between 1 and 100. Using 100% as default.",
-                limits.cpuLimitPercent, tenantId);
+                    limits.cpuLimitPercent, tenantId);
             limits.cpuLimitPercent = 100;
         }
 
         if (limits.ioBandwidthMBps <= 0) {
             LOG.warn("CelerData Resource Isolation: Invalid I/O bandwidth {} MB/s for tenant '{}', " +
                     "must be > 0. Using Integer.MAX_VALUE as default.",
-                limits.ioBandwidthMBps, tenantId);
+                    limits.ioBandwidthMBps, tenantId);
             limits.ioBandwidthMBps = Integer.MAX_VALUE;
         }
 
@@ -150,11 +150,11 @@ public class ResourceIsolationManager {
 
         LOG.info("CelerData Resource Isolation: Configured tenant '{}' with limits: " +
                 "memory={}GB, cpu={}%, io={}MB/s, mode={}",
-            tenantId,
-            limits.memoryLimitBytes / (1024L * 1024 * 1024),
-            limits.cpuLimitPercent,
-            limits.ioBandwidthMBps,
-            limits.isolationMode);
+                tenantId,
+                limits.memoryLimitBytes / (1024L * 1024 * 1024),
+                limits.cpuLimitPercent,
+                limits.ioBandwidthMBps,
+                limits.isolationMode);
     }
 
     /**
@@ -185,12 +185,12 @@ public class ResourceIsolationManager {
                 // Hard mode: Reject if over limit
                 if (projectedMemory > limits.memoryLimitBytes) {
                     String reason = String.format(
-                        "Memory limit exceeded: current=%dMB + estimated=%dMB > limit=%dMB",
-                        currentMemory / (1024 * 1024),
-                        estimatedMemoryBytes / (1024 * 1024),
-                        limits.memoryLimitBytes / (1024 * 1024));
+                            "Memory limit exceeded: current=%dMB + estimated=%dMB > limit=%dMB",
+                            currentMemory / (1024 * 1024),
+                            estimatedMemoryBytes / (1024 * 1024),
+                            limits.memoryLimitBytes / (1024 * 1024));
                     LOG.warn("CelerData Resource Isolation: Query rejected for tenant '{}': {}",
-                        tenantId, reason);
+                            tenantId, reason);
                     return QueryAdmissionResult.rejected(reason);
                 }
                 return QueryAdmissionResult.admitted("Within hard limits");
@@ -211,9 +211,9 @@ public class ResourceIsolationManager {
                 }
 
                 String reason = String.format(
-                    "Burst capacity exhausted: needed=%dMB, available=%dMB",
-                    burstNeeded / (1024 * 1024),
-                    burstAvailable / (1024 * 1024));
+                        "Burst capacity exhausted: needed=%dMB, available=%dMB",
+                        burstNeeded / (1024 * 1024),
+                        burstAvailable / (1024 * 1024));
                 return QueryAdmissionResult.rejected(reason);
 
             default:
@@ -232,7 +232,7 @@ public class ResourceIsolationManager {
         usage.totalQueriesExecuted.incrementAndGet();
 
         LOG.debug("CelerData Resource Isolation: Reserved {}MB for query {} (tenant={})",
-            memoryBytes / (1024 * 1024), queryId, tenantId);
+                memoryBytes / (1024 * 1024), queryId, tenantId);
 
         return new ResourceReservation(tenantId, queryId, memoryBytes);
     }
@@ -247,9 +247,9 @@ public class ResourceIsolationManager {
             usage.activeQueries.decrementAndGet();
 
             LOG.debug("CelerData Resource Isolation: Released {}MB for query {} (tenant={})",
-                reservation.memoryBytes / (1024 * 1024),
-                reservation.queryId,
-                reservation.tenantId);
+                    reservation.memoryBytes / (1024 * 1024),
+                    reservation.queryId,
+                    reservation.tenantId);
         }
 
         // Release burst memory if used
@@ -320,7 +320,7 @@ public class ResourceIsolationManager {
     public void setBurstPoolSize(long memoryBytes) {
         burstPoolMemoryBytes.set(memoryBytes);
         LOG.info("CelerData Resource Isolation: Burst pool set to {}GB",
-            memoryBytes / (1024L * 1024 * 1024));
+                memoryBytes / (1024L * 1024 * 1024));
     }
 
     /**
@@ -346,15 +346,15 @@ public class ResourceIsolationManager {
             if (snapshot != null) {
                 LOG.info("CelerData Resource Usage [{}]: memory={}/{}MB ({}%), " +
                         "cpu={}% (limit={}%), io={}/{}MB/s, active_queries={}",
-                    tenantId,
-                    snapshot.currentMemoryBytes / (1024 * 1024),
-                    snapshot.memoryLimitBytes / (1024 * 1024),
-                    snapshot.getMemoryUsagePercent(),
-                    snapshot.currentCpuPercent,
-                    snapshot.cpuLimitPercent,
-                    snapshot.currentIoMBps,
-                    snapshot.ioLimitMBps,
-                    snapshot.activeQueries);
+                        tenantId,
+                        snapshot.currentMemoryBytes / (1024 * 1024),
+                        snapshot.memoryLimitBytes / (1024 * 1024),
+                        snapshot.getMemoryUsagePercent(),
+                        snapshot.currentCpuPercent,
+                        snapshot.cpuLimitPercent,
+                        snapshot.currentIoMBps,
+                        snapshot.ioLimitMBps,
+                        snapshot.activeQueries);
             }
         }
     }
@@ -511,7 +511,9 @@ public class ResourceIsolationManager {
         }
 
         public double getMemoryUsagePercent() {
-            if (memoryLimitBytes == 0) return 0;
+            if (memoryLimitBytes == 0) {
+                return 0;
+            }
             return (double) currentMemoryBytes / memoryLimitBytes * 100.0;
         }
 
